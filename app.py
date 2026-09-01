@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v5.2
-생산품목: 기본값 '런 발효유' (수정 가능) | A300 단일 발효라인 통합 연동 제어 시스템
+FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v5.3
+현재 시각 자동 인식 및 우측 상단 '오전/오후 00:00:00' 착수 시각 실시간 표기 시스템
+생산품목: 기본값 '런 발효유' (수정 가능) | A300 단일 발효라인 통합 연동 제어
 """
 import streamlit as st
 import pandas as pd
@@ -33,6 +34,7 @@ def init_db():
             target_tank TEXT,
             worker_name TEXT,
             start_datetime TEXT,
+            start_time_korean TEXT,
             outdoor_temp REAL,
             indoor_temp REAL,
             status TEXT
@@ -76,12 +78,12 @@ def init_db():
 init_db()
 
 # DB 헬퍼 함수
-def save_batch_start(batch_id, p_name, tank, worker, s_dt, out_t, in_t):
+def save_batch_start(batch_id, p_name, tank, worker, s_dt, s_korean, out_t, in_t):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''
-        INSERT OR REPLACE INTO batch_master VALUES (?, ?, ?, ?, ?, ?, ?, 'RUNNING')
-    ''', (batch_id, p_name, tank, worker, s_dt, out_t, in_t))
+        INSERT OR REPLACE INTO batch_master VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING')
+    ''', (batch_id, p_name, tank, worker, s_dt, s_korean, out_t, in_t))
     conn.commit()
     conn.close()
 
@@ -117,7 +119,7 @@ def get_step_logs(batch_id):
 def get_all_completed_batches():
     conn = sqlite3.connect(DB_FILE)
     query = '''
-        SELECT b.batch_id, b.product_name, b.worker_name, b.start_datetime,
+        SELECT b.batch_id, b.product_name, b.worker_name, b.start_time_korean,
                q.completed_at, q.actual_duration, q.final_acidity, q.final_ph,
                q.viscosity_cp, q.taste_score, q.mqi_total_score
         FROM batch_master b
@@ -177,6 +179,11 @@ def calculate_optimal_temperatures(start_h, indoor_t, out_t, min_t, max_t):
         "t_eff_late": round(t_eff_late, 1)
     }
 
+# 한국어 오전/오후 시각 포맷 변환 함수
+def format_korean_ampm(dt_obj):
+    ampm = "오전" if dt_obj.hour < 12 else "오후"
+    return f"{ampm} {dt_obj.strftime('%H:%M:%S')}"
+
 # 5. 세션 상태 관리
 if "process_step" not in st.session_state:
     st.session_state.process_step = 0  # 0: 착수 대기, 1: A100, 2: A200, 3: A300, 4: A400/500, 5: A600, 6: A700(MQI), 7: 완료
@@ -184,10 +191,31 @@ if "process_step" not in st.session_state:
 if "batch_id" not in st.session_state:
     st.session_state.batch_id = ""
 
-# 6. 헤더 및 기상 상황 표시
+if "start_time_korean" not in st.session_state:
+    st.session_state.start_time_korean = ""
+
+# 6. 헤더 및 우측 상단 착수 시각 배치
 curr_t, min_t, max_t, weather_status = fetch_gijang_weather()
-st.title("🧪 FermaAX™ SCADA 단계별 공정 제어기")
-st.caption(f"부산 기장군 기상 연동 (외기 {curr_t}℃ | 일교차 {min_t}℃ ~ {max_t}℃) | SCADA P&ID 순차 제어 모드")
+
+col_head_left, col_head_right = st.columns([2.2, 1.2])
+
+with col_head_left:
+    p_name_display = st.session_state.get("product_name", "런 발효유")
+    st.title("🧪 FermaAX™ SCADA 단계별 공정 제어기")
+    st.caption(f"생산품목: **{p_name_display}** | 기장군 외기 {curr_t}℃ (최저 {min_t}℃ ~ 최고 {max_t}℃) | {weather_status}")
+
+with col_head_right:
+    # 작업 시작 후 우측 상단에 '오전/오후 00:00:00' 착수 시각 카드 표출
+    if st.session_state.process_step > 0 and st.session_state.start_time_korean:
+        st.markdown(
+            f"""
+            <div style="text-align: right; padding: 10px 14px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-radius: 8px; border: 1.5px solid #4ade80; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                <span style="color: #166534; font-size: 13px; font-weight: bold;">⏱️ 작업 착수 시각</span><br>
+                <span style="color: #15803d; font-size: 22px; font-weight: 900; letter-spacing: -0.5px;">{st.session_state.start_time_korean}</span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 step_names = [
     "0. 배치 착수 등록",
@@ -204,10 +232,13 @@ st.progress(min(1.0, st.session_state.process_step / 6.0), text=f"현재 진행 
 st.divider()
 
 # =============================================================
-# STEP 0: 배치 착수 등록 (품목명 직접 입력 가능 / 단일 발효라인)
+# STEP 0: 배치 착수 등록 (현재 시각 기본 표기 및 수정 가능)
 # =============================================================
 if st.session_state.process_step == 0:
     st.subheader("📋 [Step 0] 생산 배치 착수 등록 및 공정 환경 설정")
+    
+    now_curr = datetime.now()
+    now_curr_str = format_korean_ampm(now_curr)
     
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -217,12 +248,16 @@ if st.session_state.process_step == 0:
         worker_name = st.text_input("작업자 성명", placeholder="작업자명 입력")
         indoor_t = st.number_input("현재 발효실 실내온도 (℃)", 10.0, 40.0, 24.5, 0.1)
     with col3:
-        now_dt = datetime.now()
-        start_hour_val = st.slider("작업 착수 시각", 0.0, 23.5, round(float(now_dt.hour + now_dt.minute/60.0), 1), 0.5, format="%.1f시")
-        
-        # 품목명 기반 배치 ID 자동 생성
+        st.markdown(f"**현재 실시간 시각:** `{now_curr_str}`")
+        start_hour_val = st.slider(
+            "작업 착수 기준 시각 (시)", 
+            0.0, 23.5, 
+            round(float(now_curr.hour + now_curr.minute / 60.0), 1), 
+            0.5, 
+            format="%.1f시"
+        )
         clean_pname = "".join(filter(str.isalnum, product_name_input))
-        batch_id_gen = f"{now_dt.strftime('%Y%m%d')}_{clean_pname}_{int(start_hour_val):02d}H"
+        batch_id_gen = f"{now_curr.strftime('%Y%m%d')}_{clean_pname}_{int(start_hour_val):02d}H"
         st.info(f"생성될 배치 ID: **{batch_id_gen}**")
 
     st.divider()
@@ -232,12 +267,17 @@ if st.session_state.process_step == 0:
         elif not product_name_input.strip():
             st.error("생산 품목명을 입력바람.")
         else:
+            # 착수 시점 확정 시각 캡처 (오전/오후 00:00:00 포맷)
+            exact_start_dt = datetime.now()
+            start_korean_val = format_korean_ampm(exact_start_dt)
+            
             st.session_state.batch_id = batch_id_gen
             st.session_state.product_name = product_name_input.strip()
             st.session_state.target_tank = target_tank
             st.session_state.worker_name = worker_name
             st.session_state.indoor_t = indoor_t
             st.session_state.start_hour = start_hour_val
+            st.session_state.start_time_korean = start_korean_val
             
             # AI 처방 계산 및 세션 저장
             calc_res = calculate_optimal_temperatures(start_hour_val, indoor_t, curr_t, min_t, max_t)
@@ -245,7 +285,7 @@ if st.session_state.process_step == 0:
             
             save_batch_start(
                 batch_id_gen, product_name_input.strip(), target_tank, worker_name,
-                now_dt.strftime("%Y-%m-%d %H:%M:%S"), curr_t, indoor_t
+                exact_start_dt.strftime("%Y-%m-%d %H:%M:%S"), start_korean_val, curr_t, indoor_t
             )
             st.session_state.process_step = 1
             st.rerun()
@@ -273,6 +313,7 @@ elif st.session_state.process_step == 1:
     with c1:
         if st.button("◀ 작업 취소 (대기 복귀)", use_container_width=True):
             st.session_state.process_step = 0
+            st.session_state.start_time_korean = ""
             st.rerun()
     with c2:
         if st.button("A100 완료 ➔ 다음 단계 [A200 살균/냉각] 이동", type="primary", use_container_width=True):
@@ -506,4 +547,5 @@ elif st.session_state.process_step == 7:
     if st.button("🔄 새로운 배치 작업 시작하기", type="primary", use_container_width=True):
         st.session_state.process_step = 0
         st.session_state.batch_id = ""
+        st.session_state.start_time_korean = ""
         st.rerun()
