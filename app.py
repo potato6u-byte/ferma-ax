@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v5.8
-• 텍스트 타이틀 삭제 ➔ 좌측 상단 '런 발효유' 이미지 (우측 시계와 75px 동일 높이, 1/4 크기 배치)
-• 작업자 성명 디폴트: '공장장' | 생산품목: '런 발효유' (수정 가능)
-• A400(시럽 배합) & A500(시럽 살균) 분리 및 상단 7단계 실시간 소요시간 카드 바 탑재
-• 이전 단계 되돌리기(잘못 누름 취소) & 대한민국 표준시(KST) 대형 디지털 시계 동기화
+FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v5.9
+• '생산 대상: 런 발효유' 삭제 ➔ 기장군 실시간 외기온도 중앙 센터링 배치
+• 좌측 상단 런 발효유 이미지(75px) / 중앙 기장군 기상(75px) / 우측 KST 시계(75px) 3단 정렬
+• 상단 7단계(A100~A700) 가로형 소요시간 카드 바 및 실시간 소요시간/되돌리기 완비
 """
 import os
 import streamlit as st
@@ -55,7 +54,7 @@ st.set_page_config(
 )
 
 # 2. SQLite 데이터베이스 초기화
-DB_FILE = "ferma_scada_v58.db"
+DB_FILE = "ferma_scada_v59.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -138,7 +137,7 @@ def save_final_mqi(batch_id, duration, acidity, ph, visc, syn, taste, mqi, memo)
     c = conn.cursor()
     now_str = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute('''
-        INSERT OR REPLACE INTO batch_mqi_final VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO batch_mqi_final VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (batch_id, now_str, duration, acidity, ph, visc, syn, taste, mqi, memo))
     c.execute("UPDATE batch_master SET status = 'COMPLETED' WHERE batch_id = ?", (batch_id,))
     conn.commit()
@@ -227,15 +226,14 @@ if "step_durations" not in st.session_state:
 if "step_entry_times" not in st.session_state:
     st.session_state.step_entry_times = {}
 
-# 6. 상단 헤더: [좌측 런 이미지 (1/4)] | [중앙 공정상태] | [우측 KST 시계 (75px 동일높이)]
+# 6. 상단 헤더: [좌측 런 이미지] | [중앙 기장군 온도 (가운데 배치)] | [우측 KST 시계]
 curr_t, min_t, max_t, weather_status = fetch_gijang_weather()
 kst_now = get_kst_now()
 
 col_logo, col_info, col_clock = st.columns([1.0, 2.0, 1.2])
 
-# [좌측 상단: 런 발효유 이미지 - 높이 75px 고정]
+# [좌측 상단: 런 발효유 이미지 - 높이 75px]
 with col_logo:
-    # 로컬 이미지 파일(run.png 또는 run_logo.png) 존재 여부 확인
     local_img_path = None
     for candidate in ["run.png", "run_logo.png", "run_yogurt.png"]:
         if os.path.exists(candidate):
@@ -245,37 +243,39 @@ with col_logo:
     if local_img_path:
         st.image(local_img_path, height=75)
     else:
-        # 이미지 파일이 없을 경우에도 깨짐 없는 75px 정밀 브랜드 배지 렌더링
         st.markdown(
             """
             <div style="height: 75px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #ffffff 0%, #fff1f2 100%); border-radius: 10px; border: 2px solid #e11d48; box-shadow: 0 4px 6px rgba(225,29,72,0.1); padding: 0 16px;">
-                <div style="font-size: 32px; margin-right: 10px;">🥛</div>
+                <div style="font-size: 30px; margin-right: 8px;">🥛</div>
                 <div style="line-height: 1.15;">
                     <span style="font-size: 24px; font-weight: 900; color: #e11d48; letter-spacing: -0.5px;">RUN</span>
                     <span style="font-size: 16px; font-weight: 800; color: #1e293b; margin-left: 4px;">런 발효유</span><br>
-                    <span style="font-size: 11px; color: #64748b; font-weight: 600;">농후발효유 스마트 제어</span>
+                    <span style="font-size: 11px; color: #64748b; font-weight: 600;">스마트 발효공정 제어</span>
                 </div>
             </div>
             """,
             unsafe_allow_html=True
         )
 
-# [중앙: 실시간 공정 상태 및 기상 환경]
+# [중앙 상단: 기장군 실시간 외기온도 가운데 정렬 배치 - 높이 75px]
 with col_info:
-    p_name_display = st.session_state.get("product_name", "런 발효유")
     st.markdown(
         f"""
-        <div style="height: 75px; display: flex; flex-direction: column; justify-content: center; padding-left: 10px;">
-            <div style="font-size: 17px; font-weight: 800; color: #0f172a;">생산 대상: <span style="color: #e11d48;">{p_name_display}</span></div>
-            <div style="font-size: 12px; color: #475569; margin-top: 3px;">
-                📍 부산 기장군 외기: <b>{curr_t}℃</b> (최저 {min_t}℃ ~ 최고 {max_t}℃) | <span style="color: #0284c7;">{weather_status}</span>
+        <div style="height: 75px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: #f8fafc; border-radius: 10px; border: 1.5px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
+            <div style="font-size: 12px; color: #64748b; font-weight: 700; display: flex; align-items: center; gap: 4px;">
+                <span>📍 부산 기장군 실시간 외기</span>
+                <span style="color: #0284c7; font-size: 11px; font-weight: 600;">({weather_status})</span>
+            </div>
+            <div style="font-size: 24px; font-weight: 900; color: #0f172a; margin: 1px 0;">
+                <span style="color: #e11d48;">{curr_t}℃</span>
+                <span style="font-size: 14px; font-weight: 700; color: #475569; margin-left: 6px;">(최저 {min_t}℃ ~ 최고 {max_t}℃)</span>
             </div>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-# [우측: 대한민국 표준시 디지털 시계 - 높이 75px 고정]
+# [우측 상단: 대한민국 표준시 디지털 시계 - 높이 75px]
 with col_clock:
     clock_time_str = kst_now.strftime("%H:%M:%S")
     ampm_kor = "오전" if kst_now.hour < 12 else "오후"
