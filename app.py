@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v5.4
-대한민국 표준시(KST, Asia/Seoul) 완벽 동기화 & SQLite 스키마 충돌 방지 버전
-생산품목: 기본값 '런 발효유' (수정 가능) | A300 단일 발효라인 통합 연동
+FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v5.5
+• 대한민국 표준시(KST) 기반 실시간 전체/단계별 소요시간 추적
+• 잘못 입력/클릭 시 직전 단계 복귀 [이전 단계 취소/되돌리기] 버튼 완비
+• 생산품목: 기본값 '런 발효유' (수정 가능) | A300 단일 발효라인 통합 연동
 """
 import streamlit as st
 import pandas as pd
@@ -11,7 +12,7 @@ import requests
 import sqlite3
 from datetime import datetime, date, timedelta, timezone
 
-# 0. 대한민국 표준시(KST) 타임존 설정
+# 0. 대한민국 표준시(KST) 타임존 설정 및 시각 헬퍼 함수
 try:
     from zoneinfo import ZoneInfo
     KST = ZoneInfo("Asia/Seoul")
@@ -24,8 +25,24 @@ def get_kst_now():
 
 def format_korean_ampm(dt_obj):
     """오전/오후 HH:MM:SS 한국어 시각 포맷 변환"""
+    if not dt_obj:
+        return ""
     ampm = "오전" if dt_obj.hour < 12 else "오후"
     return f"{ampm} {dt_obj.strftime('%H:%M:%S')}"
+
+def format_time_delta(seconds_total):
+    """소요 시간을 'X시간 Y분 Z초' 형태로 변환"""
+    if seconds_total < 0:
+        seconds_total = 0
+    hrs = int(seconds_total // 3600)
+    mins = int((seconds_total % 3600) // 60)
+    secs = int(seconds_total % 60)
+    if hrs > 0:
+        return f"{hrs}시간 {mins}분 {secs}초 ({int(seconds_total//60)}분 경과)"
+    elif mins > 0:
+        return f"{mins}분 {secs}초"
+    else:
+        return f"{secs}초"
 
 # 1. 반응형 페이지 설정
 st.set_page_config(
@@ -35,8 +52,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 2. SQLite 데이터베이스 초기화 (충돌 방지용 신규 DB 파일명)
-DB_FILE = "ferma_scada_v54.db"
+# 2. SQLite 데이터베이스 초기화
+DB_FILE = "ferma_scada_v55.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -63,6 +80,7 @@ def init_db():
             step_code TEXT,
             step_name TEXT,
             log_time TEXT,
+            step_duration_str TEXT,
             scada_tag TEXT,
             ai_recommended_temp REAL,
             operator_set_temp REAL,
@@ -104,15 +122,15 @@ def save_batch_start(batch_id, p_name, tank, worker, s_dt, s_korean, out_t, in_t
     conn.commit()
     conn.close()
 
-def log_step_temp(batch_id, step_code, step_name, scada_tag, ai_rec, op_set, act_meas, status_txt):
+def log_step_temp(batch_id, step_code, step_name, step_dur_str, scada_tag, ai_rec, op_set, act_meas, status_txt):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     now_str = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute('''
         INSERT INTO step_temperature_logs 
-        (batch_id, step_code, step_name, log_time, scada_tag, ai_recommended_temp, operator_set_temp, actual_measured_temp, action_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (batch_id, step_code, step_name, now_str, scada_tag, ai_rec, op_set, act_meas, status_txt))
+        (batch_id, step_code, step_name, log_time, step_duration_str, scada_tag, ai_recommended_temp, operator_set_temp, actual_measured_temp, action_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (batch_id, step_code, step_name, now_str, step_dur_str, scada_tag, ai_rec, op_set, act_meas, status_txt))
     conn.commit()
     conn.close()
 
@@ -203,28 +221,40 @@ if "process_step" not in st.session_state:
 if "batch_id" not in st.session_state:
     st.session_state.batch_id = ""
 
-if "start_time_korean" not in st.session_state:
-    st.session_state.start_time_korean = ""
+if "batch_start_dt" not in st.session_state:
+    st.session_state.batch_start_dt = None
 
-# 6. 헤더 및 우측 상단 대한민국 표준시 착수 배지
+if "step_entry_times" not in st.session_state:
+    st.session_state.step_entry_times = {}
+
+# 6. 헤더 및 우측 상단 대한민국 표준시/소요시간 대시보드
 curr_t, min_t, max_t, weather_status = fetch_gijang_weather()
 kst_now = get_kst_now()
 
-col_head_left, col_head_right = st.columns([2.2, 1.2])
+col_head_left, col_head_right = st.columns([1.8, 1.4])
 
 with col_head_left:
     p_name_display = st.session_state.get("product_name", "런 발효유")
-    st.title("🧪 FermaAX™ SCADA 단계별 공정 제어기")
-    st.caption(f"생산품목: **{p_name_display}** | 기장군 외기 {curr_t}℃ (최저 {min_t}℃ ~ 최고 {max_t}℃) | {weather_status} (KST 동기화)")
+    st.title("🧪 FermaAX™ SCADA 공정 제어기")
+    st.caption(f"생산품목: **{p_name_display}** | 기장군 외기 {curr_t}℃ ({min_t}℃~{max_t}℃) | {weather_status}")
 
 with col_head_right:
-    # 작업 시작 후 우측 상단에 '오전/오후 HH:MM:SS' 착수 시각 고정 표출
-    if st.session_state.process_step > 0 and st.session_state.start_time_korean:
+    if st.session_state.process_step > 0 and st.session_state.batch_start_dt:
+        total_sec = (kst_now - st.session_state.batch_start_dt).total_seconds()
+        total_dur_str = format_time_delta(total_sec)
+        
+        # 현재 단계 소요 시간 계산
+        current_step_code = f"Step_{st.session_state.process_step}"
+        step_start_time = st.session_state.step_entry_times.get(current_step_code, kst_now)
+        step_sec = (kst_now - step_start_time).total_seconds()
+        step_dur_str = format_time_delta(step_sec)
+        
         st.markdown(
             f"""
-            <div style="text-align: right; padding: 10px 14px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-radius: 8px; border: 1.5px solid #4ade80; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                <span style="color: #166534; font-size: 13px; font-weight: bold;">⏱️ 작업 착수 시각 (KST)</span><br>
-                <span style="color: #15803d; font-size: 22px; font-weight: 900; letter-spacing: -0.5px;">{st.session_state.start_time_korean}</span>
+            <div style="text-align: right; padding: 8px 12px; background: #f0fdf4; border-radius: 8px; border: 1.5px solid #4ade80;">
+                <div style="font-size: 11px; color: #166534;">⏱️ 착수 시각: <b>{format_korean_ampm(st.session_state.batch_start_dt)}</b> | 현재: <b>{format_korean_ampm(kst_now)}</b></div>
+                <div style="font-size: 15px; font-weight: bold; color: #15803d; margin-top: 2px;">⏳ 총 경과시간: {total_dur_str}</div>
+                <div style="font-size: 12px; font-weight: 600; color: #0369a1;">📍 현재 단계 소요: {step_dur_str}</div>
             </div>
             """,
             unsafe_allow_html=True
@@ -241,11 +271,11 @@ step_names = [
     "7. 공정 종결 리포트"
 ]
 
-st.progress(min(1.0, st.session_state.process_step / 6.0), text=f"현재 진행 단계: **{step_names[st.session_state.process_step]}**")
+st.progress(min(1.0, st.session_state.process_step / 6.0), text=f"진행 단계: **{step_names[st.session_state.process_step]}**")
 st.divider()
 
 # =============================================================
-# STEP 0: 배치 착수 등록 (대한민국 표준시 자동 반영)
+# STEP 0: 배치 착수 등록
 # =============================================================
 if st.session_state.process_step == 0:
     st.subheader("📋 [Step 0] 생산 배치 착수 등록 및 공정 환경 설정")
@@ -279,7 +309,6 @@ if st.session_state.process_step == 0:
         elif not product_name_input.strip():
             st.error("생산 품목명을 입력바람.")
         else:
-            # 착수 시점 확정 KST 시각 캡처
             exact_kst_dt = get_kst_now()
             start_korean_val = format_korean_ampm(exact_kst_dt)
             
@@ -289,9 +318,13 @@ if st.session_state.process_step == 0:
             st.session_state.worker_name = worker_name
             st.session_state.indoor_t = indoor_t
             st.session_state.start_hour = start_hour_val
+            st.session_state.batch_start_dt = exact_kst_dt
             st.session_state.start_time_korean = start_korean_val
             
-            # AI 처방 계산 및 세션 저장
+            # 단계 진입 시각 등록
+            st.session_state.step_entry_times["Step_1"] = exact_kst_dt
+            
+            # AI 처방 계산
             calc_res = calculate_optimal_temperatures(start_hour_val, indoor_t, curr_t, min_t, max_t)
             st.session_state.calc_res = calc_res
             
@@ -323,13 +356,18 @@ elif st.session_state.process_step == 1:
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("◀ 작업 취소 (대기 복귀)", use_container_width=True):
+        if st.button("◀ 작업 취소 (Step 0으로 복귀)", use_container_width=True):
             st.session_state.process_step = 0
-            st.session_state.start_time_korean = ""
+            st.session_state.batch_start_dt = None
+            st.session_state.step_entry_times = {}
             st.rerun()
     with c2:
         if st.button("A100 완료 ➔ 다음 단계 [A200 살균/냉각] 이동", type="primary", use_container_width=True):
-            log_step_temp(st.session_state.batch_id, "A100", "Base Mix 배합", "T101~T104", 0.0, 0.0, mix_temp, mix_status)
+            step_sec = (kst_now - st.session_state.step_entry_times.get("Step_1", kst_now)).total_seconds()
+            step_dur_str = format_time_delta(step_sec)
+            log_step_temp(st.session_state.batch_id, "A100", "Base Mix 배합", step_dur_str, "T101~T104", 0.0, 0.0, mix_temp, mix_status)
+            
+            st.session_state.step_entry_times["Step_2"] = get_kst_now()
             st.session_state.process_step = 2
             st.rerun()
 
@@ -356,17 +394,26 @@ elif st.session_state.process_step == 2:
 
     st.markdown("---")
     st.markdown("#### 📝 작업자 HMI 설정 및 실측 확인 입력")
-    with st.form("a200_form"):
-        f1, f2 = st.columns(2)
-        with f1:
-            op_set_cool = st.number_input("HMI 실제 설정값 (`P101TC02.SP`, ℃)", 35.0, 42.0, float(c_res['rec_cooling']), 0.1)
-        with f2:
-            act_meas_cool = st.number_input("살균기 토출 실측 액온 (`P101TT02`, ℃)", 35.0, 42.0, float(c_res['rec_cooling']), 0.1)
-        
-        btn_a200 = st.form_submit_button("💾 A200 온도 확인 기록 및 [A300 발효] 이동", use_container_width=True, type="primary")
-        if btn_a200:
+    f1, f2 = st.columns(2)
+    with f1:
+        op_set_cool = st.number_input("HMI 실제 설정값 (`P101TC02.SP`, ℃)", 35.0, 42.0, float(c_res['rec_cooling']), 0.1)
+    with f2:
+        act_meas_cool = st.number_input("살균기 토출 실측 액온 (`P101TT02`, ℃)", 35.0, 42.0, float(c_res['rec_cooling']), 0.1)
+
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("◀ 이전 단계로 되돌리기 (A100 복귀 / 잘못 누름 취소)", use_container_width=True):
+            st.session_state.process_step = 1
+            st.rerun()
+    with c2:
+        if st.button("💾 A200 확인 기록 ➔ [A300 발효] 이동", type="primary", use_container_width=True):
+            step_sec = (kst_now - st.session_state.step_entry_times.get("Step_2", kst_now)).total_seconds()
+            step_dur_str = format_time_delta(step_sec)
             status_eval = "정상 설정" if abs(op_set_cool - c_res['rec_cooling']) <= 0.2 else "권장치 편차 설정"
-            log_step_temp(st.session_state.batch_id, "A200", "살균냉각투입", "P101TC02", c_res['rec_cooling'], op_set_cool, act_meas_cool, status_eval)
+            log_step_temp(st.session_state.batch_id, "A200", "살균냉각투입", step_dur_str, "P101TC02", c_res['rec_cooling'], op_set_cool, act_meas_cool, status_eval)
+            
+            st.session_state.step_entry_times["Step_3"] = get_kst_now()
             st.session_state.process_step = 3
             st.rerun()
 
@@ -391,22 +438,31 @@ elif st.session_state.process_step == 3:
 
     st.markdown("---")
     st.markdown("#### ⏱️ 5시간(300분) 경과 시점 골든 액온 점검")
-    with st.form("a300_form"):
-        h1, h2, h3 = st.columns(3)
-        with h1:
-            op_set_hw = st.number_input("HMI 핫워터 설정값 (℃)", 35.0, 42.0, float(c_res['rec_hotwater']), 0.1)
-        with h2:
-            act_meas_5h = st.number_input("5H 경과 실측 액온 (℃) [골든기준: 39.5℃]", 35.0, 43.0, 39.5, 0.1)
-        with h3:
-            acid_5h = st.number_input("5H 경과 실측 산도", 0.700, 0.950, 0.910, 0.005, format="%.3f")
+    h1, h2, h3 = st.columns(3)
+    with h1:
+        op_set_hw = st.number_input("HMI 핫워터 설정값 (℃)", 35.0, 42.0, float(c_res['rec_hotwater']), 0.1)
+    with h2:
+        act_meas_5h = st.number_input("5H 경과 실측 액온 (℃) [골든기준: 39.5℃]", 35.0, 43.0, 39.5, 0.1)
+    with h3:
+        acid_5h = st.number_input("5H 경과 실측 산도", 0.700, 0.950, 0.910, 0.005, format="%.3f")
 
-        btn_a300 = st.form_submit_button("💾 5H 점검 기록 및 [A400/A500 시럽 공정] 이동", use_container_width=True, type="primary")
-        if btn_a300:
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("◀ 이전 단계로 되돌리기 (A200 복귀 / 잘못 누름 취소)", use_container_width=True):
+            st.session_state.process_step = 2
+            st.rerun()
+    with c2:
+        if st.button("💾 5H 점검 기록 ➔ [A400/A500 시럽 공정] 이동", type="primary", use_container_width=True):
+            step_sec = (kst_now - st.session_state.step_entry_times.get("Step_3", kst_now)).total_seconds()
+            step_dur_str = format_time_delta(step_sec)
             diff_5h = act_meas_5h - 39.5
             eval_5h = "골든 궤적 정상 유지" if abs(diff_5h) <= 0.3 else f"편차 발생 ({diff_5h:+.2f}℃)"
-            log_step_temp(st.session_state.batch_id, "A300", "발효재킷보온", "PHE301WCV01", c_res['rec_hotwater'], op_set_hw, act_meas_5h, eval_5h)
+            log_step_temp(st.session_state.batch_id, "A300", "발효재킷보온", step_dur_str, "PHE301WCV01", c_res['rec_hotwater'], op_set_hw, act_meas_5h, eval_5h)
+            
             st.session_state.acid_5h = acid_5h
             st.session_state.act_meas_5h = act_meas_5h
+            st.session_state.step_entry_times["Step_4"] = get_kst_now()
             st.session_state.process_step = 4
             st.rerun()
 
@@ -431,12 +487,16 @@ elif st.session_state.process_step == 4:
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("◀ 이전 단계 (A300)", use_container_width=True):
+        if st.button("◀ 이전 단계로 되돌리기 (A300 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 3
             st.rerun()
     with c2:
         if st.button("A400/A500 완료 ➔ 다음 단계 [A600 블렌딩/칠링] 이동", type="primary", use_container_width=True):
-            log_step_temp(st.session_state.batch_id, "A400/500", "시럽배합살균", "P201TC02", 24.5, syrup_temp, syrup_temp, f"당도 {syrup_brix} Brix")
+            step_sec = (kst_now - st.session_state.step_entry_times.get("Step_4", kst_now)).total_seconds()
+            step_dur_str = format_time_delta(step_sec)
+            log_step_temp(st.session_state.batch_id, "A400/500", "시럽배합살균", step_dur_str, "P201TC02", 24.5, syrup_temp, syrup_temp, f"당도 {syrup_brix} Brix")
+            
+            st.session_state.step_entry_times["Step_5"] = get_kst_now()
             st.session_state.process_step = 5
             st.rerun()
 
@@ -468,17 +528,26 @@ elif st.session_state.process_step == 5:
 
     st.markdown("---")
     st.markdown("#### 📝 PHE301 냉각 가동 및 실측 입력")
-    with st.form("a600_form"):
-        cl1, cl2 = st.columns(2)
-        with cl1:
-            act_dur_min = st.number_input("실제 냉각 개시 분(Time)", 300, 420, int(trig_min), 1)
-        with cl2:
-            phe_out_t = st.number_input("PHE301 토출 냉각온도 (`PHE301STT02`, ℃)", 4.0, 15.0, 7.3, 0.1)
+    cl1, cl2 = st.columns(2)
+    with cl1:
+        act_dur_min = st.number_input("실제 냉각 개시 분(Time)", 300, 420, int(trig_min), 1)
+    with cl2:
+        phe_out_t = st.number_input("PHE301 토출 냉각온도 (`PHE301STT02`, ℃)", 4.0, 15.0, 7.3, 0.1)
 
-        btn_a600 = st.form_submit_button("💾 A600 냉각 확인 기록 및 [A700 충전/품질평가] 이동", use_container_width=True, type="primary")
-        if btn_a600:
-            log_step_temp(st.session_state.batch_id, "A600", "PHE301급속냉각", "PHE301STT02", 7.3, 7.3, phe_out_t, f"{act_dur_min}분 시점 냉각 개시")
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("◀ 이전 단계로 되돌리기 (A400/500 복귀 / 잘못 누름 취소)", use_container_width=True):
+            st.session_state.process_step = 4
+            st.rerun()
+    with c2:
+        if st.button("💾 A600 냉각 확인 ➔ [A700 충전/품질평가] 이동", type="primary", use_container_width=True):
+            step_sec = (kst_now - st.session_state.step_entry_times.get("Step_5", kst_now)).total_seconds()
+            step_dur_str = format_time_delta(step_sec)
+            log_step_temp(st.session_state.batch_id, "A600", "PHE301급속냉각", step_dur_str, "PHE301STT02", 7.3, 7.3, phe_out_t, f"{act_dur_min}분 시점 냉각 개시")
+            
             st.session_state.act_dur_min = act_dur_min
+            st.session_state.step_entry_times["Step_6"] = get_kst_now()
             st.session_state.process_step = 6
             st.rerun()
 
@@ -489,40 +558,45 @@ elif st.session_state.process_step == 6:
     st.subheader(f"📍 [Step 6: A700] {st.session_state.product_name} 서지탱크 이송 & 다차원 품질검증 (배치: {st.session_state.batch_id})")
     st.info(f"💡 {st.session_state.product_name} 최종 완제품의 산도·pH 및 텍스처(점도, 유청분리), 관능(맛) 점수를 종합 평가하여 DB에 영구 기록함.")
     
-    with st.form("a700_mqi_form"):
-        st.markdown("##### 1. 이화학 지표 (Chemical)")
-        q1, q2, q3 = st.columns(3)
-        with q1:
-            f_acid = st.number_input("최종 완제품 산도 [골든: 0.965]", 0.800, 1.200, 0.965, 0.001, format="%.3f")
-        with q2:
-            f_ph = st.number_input("최종 완제품 pH [골든: 4.70]", 4.00, 5.50, 4.70, 0.01)
-        with q3:
-            f_total_dur = st.number_input("총 소요 발효시간 (분)", 300, 450, int(getattr(st.session_state, 'act_dur_min', 348) + 30), 1)
+    st.markdown("##### 1. 이화학 지표 (Chemical)")
+    q1, q2, q3 = st.columns(3)
+    with q1:
+        f_acid = st.number_input("최종 완제품 산도 [골든: 0.965]", 0.800, 1.200, 0.965, 0.001, format="%.3f")
+    with q2:
+        f_ph = st.number_input("최종 완제품 pH [골든: 4.70]", 4.00, 5.50, 4.70, 0.01)
+    with q3:
+        f_total_dur = st.number_input("총 소요 발효시간 (분)", 300, 450, int(getattr(st.session_state, 'act_dur_min', 348) + 30), 1)
 
-        st.markdown("##### 2. 물성/텍스처 지표 (Texture)")
-        t1, t2 = st.columns(2)
-        with t1:
-            f_visc = st.number_input("회전식 점도계 측정치 (cP) [골든: 3,200 cP]", 1500.0, 4500.0, 3200.0, 50.0)
-        with t2:
-            f_syn = st.number_input("유청 분리율 (Syneresis, %) [골든: 1.5% 이하]", 0.0, 15.0, 1.1, 0.1)
+    st.markdown("##### 2. 물성/텍스처 지표 (Texture)")
+    t1, t2 = st.columns(2)
+    with t1:
+        f_visc = st.number_input("회전식 점도계 측정치 (cP) [골든: 3,200 cP]", 1500.0, 4500.0, 3200.0, 50.0)
+    with t2:
+        f_syn = st.number_input("유청 분리율 (Syneresis, %) [골든: 1.5% 이하]", 0.0, 15.0, 1.1, 0.1)
 
-        st.markdown("##### 3. 관능/맛 지표 (Taste & Flavor)")
-        g1, g2 = st.columns(2)
-        with g1:
-            f_taste = st.slider(f"관능 평가 점수 ({st.session_state.product_name} 맛 밸런스, 5점 만점)", 1.0, 5.0, 4.8, 0.1)
-        with g2:
-            f_memo = st.text_input("작업 특이사항 메모", placeholder=f"예: {st.session_state.product_name} 골든 기준 완벽 수렴, 풍미 및 바디감 우수.")
+    st.markdown("##### 3. 관능/맛 지표 (Taste & Flavor)")
+    g1, g2 = st.columns(2)
+    with g1:
+        f_taste = st.slider(f"관능 평가 점수 ({st.session_state.product_name} 맛 밸런스, 5점 만점)", 1.0, 5.0, 4.8, 0.1)
+    with g2:
+        f_memo = st.text_input("작업 특이사항 메모", placeholder=f"예: {st.session_state.product_name} 골든 기준 완벽 수렴, 풍미 및 바디감 우수.")
 
-        # 종합 MQI 점수 계산 (100점 만점 환산)
-        score_chem = max(0.0, 30.0 - abs(f_acid - 0.965) * 500.0)
-        score_tex = max(0.0, 40.0 - abs(f_visc - 3200.0) * 0.02 - (f_syn * 2.0))
-        score_taste = (f_taste / 5.0) * 30.0
-        mqi_total = round(min(100.0, max(0.0, score_chem + score_tex + score_taste)), 1)
+    # 종합 MQI 점수 계산 (100점 만점 환산)
+    score_chem = max(0.0, 30.0 - abs(f_acid - 0.965) * 500.0)
+    score_tex = max(0.0, 40.0 - abs(f_visc - 3200.0) * 0.02 - (f_syn * 2.0))
+    score_taste = (f_taste / 5.0) * 30.0
+    mqi_total = round(min(100.0, max(0.0, score_chem + score_tex + score_taste)), 1)
 
-        st.markdown(f"### 🏆 {st.session_state.product_name} 종합 품질점수 (MQI Score): **`{mqi_total} / 100 점`**")
+    st.markdown(f"### 🏆 {st.session_state.product_name} 종합 품질점수 (MQI Score): **`{mqi_total} / 100 점`**")
 
-        btn_final_save = st.form_submit_button("💾 전체 공정 완료 및 DB 영구 저장", use_container_width=True, type="primary")
-        if btn_final_save:
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("◀ 이전 단계로 되돌리기 (A600 복귀 / 잘못 누름 취소)", use_container_width=True):
+            st.session_state.process_step = 5
+            st.rerun()
+    with c2:
+        if st.button("💾 전체 공정 최종 종결 및 DB 영구 저장", type="primary", use_container_width=True):
             save_final_mqi(
                 st.session_state.batch_id, f_total_dur, f_acid, f_ph,
                 f_visc, f_syn, f_taste, mqi_total, f_memo
@@ -534,9 +608,9 @@ elif st.session_state.process_step == 6:
 # STEP 7: 공정 완료 리포트 및 이력 조회
 # =============================================================
 elif st.session_state.process_step == 7:
-    st.success(f"🎉 [{st.session_state.product_name}] 배치 [{st.session_state.batch_id}] 공정이 성공적으로 종결되었으며 모든 단계별 온도 이력이 기록되었음!")
+    st.success(f"🎉 [{st.session_state.product_name}] 배치 [{st.session_state.batch_id}] 공정이 성공적으로 종결되었으며 모든 단계별 온도 및 소요시간 이력이 기록되었음!")
     
-    tab_r1, tab_r2 = st.tabs(["📊 이번 배치 공정 단계별 온도 추적 이력", "📋 누적 완료 배치 관리"])
+    tab_r1, tab_r2 = st.tabs(["📊 이번 배치 공정 단계별 온도 및 소요시간 이력", "📋 누적 완료 배치 관리"])
     
     with tab_r1:
         cur_logs = get_step_logs(st.session_state.batch_id)
@@ -559,5 +633,7 @@ elif st.session_state.process_step == 7:
     if st.button("🔄 새로운 배치 작업 시작하기", type="primary", use_container_width=True):
         st.session_state.process_step = 0
         st.session_state.batch_id = ""
+        st.session_state.batch_start_dt = None
+        st.session_state.step_entry_times = {}
         st.session_state.start_time_korean = ""
         st.rerun()
