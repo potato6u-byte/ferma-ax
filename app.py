@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v5.9
-• '생산 대상: 런 발효유' 삭제 ➔ 기장군 실시간 외기온도 중앙 센터링 배치
-• 좌측 상단 런 발효유 이미지(75px) / 중앙 기장군 기상(75px) / 우측 KST 시계(75px) 3단 정렬
-• 상단 7단계(A100~A700) 가로형 소요시간 카드 바 및 실시간 소요시간/되돌리기 완비
+FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.0
+• 우측 상단 대한민국 표준시(KST) 실시간 라이브 디지털 시계 (초단위 연속 갱신)
+• 배치 착수 후 총 경과시간(초단위 실시간 카운트업) 연동
+• 좌측 런 발효유 로고 / 중앙 기장군 외기온도 센터링 / 상단 7단계 소요시간 카드 바
+• A400(배합)·A500(살균) 분리, 작업자 디폴트 '공장장', 이전 단계 되돌리기 완비
 """
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 import requests
@@ -54,7 +56,7 @@ st.set_page_config(
 )
 
 # 2. SQLite 데이터베이스 초기화
-DB_FILE = "ferma_scada_v59.db"
+DB_FILE = "ferma_scada_v60.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -226,13 +228,13 @@ if "step_durations" not in st.session_state:
 if "step_entry_times" not in st.session_state:
     st.session_state.step_entry_times = {}
 
-# 6. 상단 헤더: [좌측 런 이미지] | [중앙 기장군 온도 (가운데 배치)] | [우측 KST 시계]
+# 6. 상단 헤더: [좌측 런 이미지] | [중앙 기장군 외기온도] | [우측 KST 실시간 연속 시계]
 curr_t, min_t, max_t, weather_status = fetch_gijang_weather()
 kst_now = get_kst_now()
 
 col_logo, col_info, col_clock = st.columns([1.0, 2.0, 1.2])
 
-# [좌측 상단: 런 발효유 이미지 - 높이 75px]
+# [좌측 상단: 런 발효유 이미지 - 75px]
 with col_logo:
     local_img_path = None
     for candidate in ["run.png", "run_logo.png", "run_yogurt.png"]:
@@ -257,7 +259,7 @@ with col_logo:
             unsafe_allow_html=True
         )
 
-# [중앙 상단: 기장군 실시간 외기온도 가운데 정렬 배치 - 높이 75px]
+# [중앙 상단: 기장군 실시간 외기온도 가운데 정렬 배치 - 75px]
 with col_info:
     st.markdown(
         f"""
@@ -275,28 +277,112 @@ with col_info:
         unsafe_allow_html=True
     )
 
-# [우측 상단: 대한민국 표준시 디지털 시계 - 높이 75px]
+# [우측 상단: 자바스크립트 기반 실시간 초단위 라이브 시계 (75px 동일 높이)]
 with col_clock:
-    clock_time_str = kst_now.strftime("%H:%M:%S")
-    ampm_kor = "오전" if kst_now.hour < 12 else "오후"
-    
-    total_elapsed_txt = ""
+    start_epoch = 0
     if st.session_state.process_step > 0 and st.session_state.batch_start_dt:
-        total_sec = (kst_now - st.session_state.batch_start_dt).total_seconds()
-        total_elapsed_txt = f"<div style='font-size: 12px; color: #4ade80; font-weight: bold; margin-top: 2px;'>⏱️ 총 경과: {format_time_delta(total_sec)}</div>"
+        start_epoch = int(st.session_state.batch_start_dt.timestamp() * 1000)
 
-    st.markdown(
-        f"""
-        <div style="height: 75px; text-align: right; padding: 8px 14px; background: #0f172a; border-radius: 10px; border: 1.5px solid #38bdf8; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-direction: column; justify-content: center;">
-            <div style="font-size: 11px; color: #94a3b8; font-weight: bold;">대한민국 표준시 (KST)</div>
-            <div style="font-size: 20px; font-weight: 900; color: #38bdf8; font-family: monospace; letter-spacing: 1px; line-height: 1.2;">
-                <span style="font-size: 12px; color: #a5f3fc;">{ampm_kor}</span> {clock_time_str}
-            </div>
-            {total_elapsed_txt}
+    clock_component_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            body {{
+                margin: 0;
+                padding: 0;
+                background: transparent;
+                overflow: hidden;
+                font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
+            }}
+            .clock-card {{
+                height: 75px;
+                text-align: right;
+                padding: 6px 12px;
+                background: #0f172a;
+                border-radius: 10px;
+                border: 1.5px solid #38bdf8;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                box-sizing: border-box;
+            }}
+            .clock-title {{
+                font-size: 11px;
+                color: #94a3b8;
+                font-weight: bold;
+                letter-spacing: -0.2px;
+            }}
+            .clock-time {{
+                font-size: 20px;
+                font-weight: 900;
+                color: #38bdf8;
+                font-family: monospace;
+                letter-spacing: 1px;
+                line-height: 1.2;
+                margin-top: 1px;
+            }}
+            .ampm {{
+                font-size: 12px;
+                color: #a5f3fc;
+                margin-right: 3px;
+                font-family: sans-serif;
+            }}
+            .elapsed {{
+                font-size: 11px;
+                color: #4ade80;
+                font-weight: bold;
+                margin-top: 2px;
+                white-space: nowrap;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="clock-card">
+            <div class="clock-title">대한민국 표준시 (KST)</div>
+            <div class="clock-time" id="live-kst-clock">--:--:--</div>
+            <div class="elapsed" id="live-kst-elapsed"></div>
         </div>
-        """,
-        unsafe_allow_html=True
-    )
+        <script>
+            function updateClock() {{
+                const now = new Date();
+                // UTC 기준 +9시간 연산으로 KST 오차 없이 정확 추출
+                const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+                const kst = new Date(utc + (9 * 3600000));
+
+                let hrs = kst.getHours();
+                const mins = String(kst.getMinutes()).padStart(2, '0');
+                const secs = String(kst.getSeconds()).padStart(2, '0');
+                const ampm = hrs < 12 ? '오전' : '오후';
+                const hrsStr = String(hrs).padStart(2, '0');
+
+                document.getElementById('live-kst-clock').innerHTML = 
+                    `<span class="ampm">${{ampm}}</span> ${{hrsStr}}:${{mins}}:${{secs}}`;
+
+                const startEpoch = {start_epoch};
+                if (startEpoch > 0) {{
+                    const diffSec = Math.max(0, Math.floor((now.getTime() - startEpoch) / 1000));
+                    const h = Math.floor(diffSec / 3600);
+                    const m = Math.floor((diffSec % 3600) / 60);
+                    const s = diffSec % 60;
+                    let dur = '';
+                    if (h > 0) dur = `${{h}}시간 ${{m}}분 ${{s}}초`;
+                    else if (m > 0) dur = `${{m}}분 ${{s}}초`;
+                    else dur = `${{s}}초`;
+                    document.getElementById('live-kst-elapsed').innerHTML = `⏱️ 총 경과: ${{dur}}`;
+                }} else {{
+                    document.getElementById('live-kst-elapsed').innerHTML = '';
+                }}
+            }}
+            updateClock();
+            setInterval(updateClock, 1000);
+        </script>
+    </body>
+    </html>
+    """
+    components.html(clock_component_html, height=75)
 
 st.markdown("<div style='margin-top: 8px;'></div>", unsafe_allow_html=True)
 
@@ -549,7 +635,7 @@ elif st.session_state.process_step == 3:
             st.rerun()
 
 # =============================================================
-# STEP 4: A400 공정 (시럽 배합 및 용해) - ★ 독립 분리
+# STEP 4: A400 공정 (시럽 배합 및 용해)
 # =============================================================
 elif st.session_state.process_step == 4:
     st.subheader(f"📍 [Step 4: A400] {st.session_state.product_name} 시럽 배합 및 용해 단계 (배치: {st.session_state.batch_id})")
@@ -586,7 +672,7 @@ elif st.session_state.process_step == 4:
             st.rerun()
 
 # =============================================================
-# STEP 5: A500 공정 (시럽 살균 및 냉각) - ★ 독립 분리
+# STEP 5: A500 공정 (시럽 살균 및 냉각)
 # =============================================================
 elif st.session_state.process_step == 5:
     st.subheader(f"📍 [Step 5: A500] {st.session_state.product_name} 시럽 전용 살균 및 냉각 단계 (배치: {st.session_state.batch_id})")
