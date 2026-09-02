@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.4
-• 구글 스프레드시트(Apps Script Webhook) 실시간 클라우드 영구 누적 저장 연동
-• 앱 내 모든 아이콘 제거 (순수 텍스트 인터페이스)
-• 현장 시인성 전역 대형 폰트(Big Font) CSS 유지
-• 우측 상단 대한민국 표준시(KST) 실시간 초단위 라이브 시계 및 총 경과시간 연동
-• 상단 7단계 소요시간 카드 바, A400/A500 독립 분리, 이전 단계 되돌리기 완비
+FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.5
+• '현재 착수 기준시각' 삭제 ➔ 전체 총 경과 및 현재 단계 실시간 시간 흐름 초단위 연동
+• 상단 7단계 공정 카드 바: 현재 활성 공정(Active Card) 실시간 라이브 타이머 탑재
+• 우측 상단: 대한민국 표준시(KST) 라이브 시계 + 전체 총 경과시간 + 현재 단계 소요시간 3단 실시간 모니터링
+• 구글 스프레드시트(Apps Script Webhook) 영구 누적 저장 연동
+• 앱 내 모든 아이콘 제거 (순수 텍스트 인터페이스) 및 전역 대형 폰트(Big Font) CSS 유지
 """
 import os
 import json
@@ -18,7 +18,7 @@ import sqlite3
 from datetime import datetime, date, timedelta, timezone
 
 # =============================================================
-# ★ 구글 스프레드시트 웹 앱 URL 설정 (복사한 주소를 여기에 붙여넣음)
+# 구글 스프레드시트 웹 앱 URL 설정
 # =============================================================
 GSHEET_WEBHOOK_URL = "여기에_복사한_웹앱_URL을_붙여넣으세요"
 
@@ -54,7 +54,7 @@ def format_time_delta(seconds_total):
     else:
         return f"{int(seconds_total)}초"
 
-# 1. 반응형 페이지 설정 (아이콘 제거)
+# 1. 반응형 페이지 설정
 st.set_page_config(
     page_title="런 발효유 SCADA 공정 제어기",
     layout="wide",
@@ -178,7 +178,7 @@ def log_step_temp(batch_id, step_code, step_name, step_dur_str, scada_tag, ai_re
 
 def send_to_google_sheet(payload):
     """구글 스프레드시트 웹훅으로 실시간 데이터 전송"""
-    if not GSHEET_WEBHOOK_URL or "AKfycbyHVyENzMqJUb7JX9PJ_QQC_yMeZGga4rfhLJrfxFudHxZB05hnrqJRedZG_Acn0ozR" in GSHEET_WEBHOOK_URL:
+    if not GSHEET_WEBHOOK_URL or "여기에" in GSHEET_WEBHOOK_URL:
         return False, "구글 시트 URL 미설정"
     try:
         res = requests.post(GSHEET_WEBHOOK_URL, json=payload, timeout=8)
@@ -194,7 +194,7 @@ def save_final_mqi(batch_id, duration, acidity, ph, visc, syn, taste, mqi, memo)
     c = conn.cursor()
     now_str = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute('''
-        INSERT OR REPLACE INTO batch_mqi_final VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO batch_mqi_final VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (batch_id, now_str, duration, acidity, ph, visc, syn, taste, mqi, memo))
     c.execute("UPDATE batch_master SET status = 'COMPLETED' WHERE batch_id = ?", (batch_id,))
     conn.commit()
@@ -297,7 +297,7 @@ if "step_entry_times" not in st.session_state:
 curr_t, min_t, max_t, weather_status = fetch_gijang_weather()
 kst_now = get_kst_now()
 
-col_logo, col_info, col_clock = st.columns([1.0, 2.0, 1.2])
+col_logo, col_info, col_clock = st.columns([1.0, 1.8, 1.4])
 
 # [좌측 상단: 브랜드 텍스트 배지]
 with col_logo:
@@ -308,11 +308,11 @@ with col_logo:
             break
 
     if local_img_path:
-        st.image(local_img_path, height=85)
+        st.image(local_img_path, height=95)
     else:
         st.markdown(
             """
-            <div style="height: 85px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #ffffff 0%, #fff1f2 100%); border-radius: 12px; border: 2px solid #e11d48; box-shadow: 0 4px 6px rgba(225,29,72,0.1); padding: 0 16px;">
+            <div style="height: 95px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #ffffff 0%, #fff1f2 100%); border-radius: 12px; border: 2px solid #e11d48; box-shadow: 0 4px 6px rgba(225,29,72,0.1); padding: 0 16px;">
                 <div style="line-height: 1.15; text-align: center;">
                     <span style="font-size: 26px; font-weight: 900; color: #e11d48; letter-spacing: -0.5px;">RUN</span>
                     <span style="font-size: 18px; font-weight: 800; color: #1e293b; margin-left: 4px;">런 발효유</span><br>
@@ -327,7 +327,7 @@ with col_logo:
 with col_info:
     st.markdown(
         f"""
-        <div style="height: 85px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: #f8fafc; border-radius: 12px; border: 1.5px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
+        <div style="height: 95px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: #f8fafc; border-radius: 12px; border: 1.5px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
             <div style="font-size: 14px; color: #64748b; font-weight: 800; display: flex; align-items: center; gap: 6px;">
                 <span>부산 기장군 실시간 외기</span>
                 <span style="color: #0284c7; font-size: 13px; font-weight: 700;">({weather_status})</span>
@@ -341,12 +341,30 @@ with col_info:
         unsafe_allow_html=True
     )
 
-# [우측 상단: 자바스크립트 기반 실시간 초단위 라이브 시계]
-with col_clock:
-    start_epoch = 0
-    if st.session_state.process_step > 0 and st.session_state.batch_start_dt:
-        start_epoch = int(st.session_state.batch_start_dt.timestamp() * 1000)
+# [우측 상단: 실시간 초단위 라이브 KST 시계 + 총 경과 + 현재 단계 진행 모니터]
+step_defs = [
+    (1, "A100", "Base 배합", "T101~104"),
+    (2, "A200", "살균/냉각", "P101TC02"),
+    (3, "A300", "발효/보온", "재킷 온수"),
+    (4, "A400", "시럽 배합", "T401~402"),
+    (5, "A500", "시럽 살균", "P201TC02"),
+    (6, "A600", "급속 칠링", "PHE301"),
+    (7, "A700", "MQI 충전", "서지/충전")
+]
 
+cur_step = st.session_state.process_step
+batch_start_epoch = int(st.session_state.batch_start_dt.timestamp() * 1000) if (cur_step > 0 and st.session_state.batch_start_dt) else 0
+
+active_step_code = ""
+active_step_name = ""
+active_step_epoch = 0
+if 1 <= cur_step <= 7:
+    active_step_code = step_defs[cur_step - 1][1]
+    active_step_name = step_defs[cur_step - 1][2]
+    cur_step_entry_dt = st.session_state.step_entry_times.get(f"Step_{cur_step}", kst_now)
+    active_step_epoch = int(cur_step_entry_dt.timestamp() * 1000)
+
+with col_clock:
     clock_component_html = f"""
     <!DOCTYPE html>
     <html>
@@ -361,9 +379,9 @@ with col_clock:
                 font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
             }}
             .clock-card {{
-                height: 85px;
+                height: 95px;
                 text-align: right;
-                padding: 8px 14px;
+                padding: 7px 14px;
                 background: #0f172a;
                 border-radius: 12px;
                 border: 1.5px solid #38bdf8;
@@ -374,31 +392,36 @@ with col_clock:
                 box-sizing: border-box;
             }}
             .clock-title {{
-                font-size: 12px;
+                font-size: 11px;
                 color: #94a3b8;
                 font-weight: bold;
                 letter-spacing: -0.2px;
             }}
             .clock-time {{
-                font-size: 23px;
+                font-size: 21px;
                 font-weight: 900;
                 color: #38bdf8;
                 font-family: monospace;
                 letter-spacing: 1px;
-                line-height: 1.2;
-                margin-top: 1px;
+                line-height: 1.15;
             }}
             .ampm {{
-                font-size: 13px;
+                font-size: 12px;
                 color: #a5f3fc;
                 margin-right: 4px;
                 font-family: sans-serif;
             }}
-            .elapsed {{
-                font-size: 13px;
+            .elapsed-box {{
+                font-size: 12px;
                 color: #4ade80;
                 font-weight: 800;
+                white-space: nowrap;
                 margin-top: 2px;
+            }}
+            .step-elapsed-box {{
+                font-size: 12px;
+                color: #facc15;
+                font-weight: 800;
                 white-space: nowrap;
             }}
         </style>
@@ -407,7 +430,8 @@ with col_clock:
         <div class="clock-card">
             <div class="clock-title">대한민국 표준시 (KST)</div>
             <div class="clock-time" id="live-kst-clock">--:--:--</div>
-            <div class="elapsed" id="live-kst-elapsed"></div>
+            <div class="elapsed-box" id="live-kst-elapsed"></div>
+            <div class="step-elapsed-box" id="live-step-elapsed"></div>
         </div>
         <script>
             function updateClock() {{
@@ -424,7 +448,7 @@ with col_clock:
                 document.getElementById('live-kst-clock').innerHTML = 
                     `<span class="ampm">${{ampm}}</span> ${{hrsStr}}:${{mins}}:${{secs}}`;
 
-                const startEpoch = {start_epoch};
+                const startEpoch = {batch_start_epoch};
                 if (startEpoch > 0) {{
                     const diffSec = Math.max(0, Math.floor((now.getTime() - startEpoch) / 1000));
                     const h = Math.floor(diffSec / 3600);
@@ -438,6 +462,17 @@ with col_clock:
                 }} else {{
                     document.getElementById('live-kst-elapsed').innerHTML = '';
                 }}
+
+                const stepEpoch = {active_step_epoch};
+                if (stepEpoch > 0) {{
+                    const stepDiff = Math.max(0, Math.floor((now.getTime() - stepEpoch) / 1000));
+                    const sm = Math.floor(stepDiff / 60);
+                    const ss = stepDiff % 60;
+                    let stepDur = (sm > 0) ? `${{sm}}분 ${{ss}}초` : `${{ss}}초`;
+                    document.getElementById('live-step-elapsed').innerHTML = `현재 {active_step_code}: ${{stepDur}} 진행 중`;
+                }} else {{
+                    document.getElementById('live-step-elapsed').innerHTML = '';
+                }}
             }}
             updateClock();
             setInterval(updateClock, 1000);
@@ -445,68 +480,163 @@ with col_clock:
     </body>
     </html>
     """
-    components.html(clock_component_html, height=85)
+    components.html(clock_component_html, height=95)
 
 st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
 
 # -------------------------------------------------------------
-# 상단 7단계 가로형 소요시간 카드 바
+# 상단 7단계 가로형 공정 바 (활성 단계 실시간 초단위 카운트다운/업 탑재)
 # -------------------------------------------------------------
-step_cols = st.columns(7)
-step_defs = [
-    (1, "A100", "Base 배합", "T101~104"),
-    (2, "A200", "살균/냉각", "P101TC02"),
-    (3, "A300", "발효/보온", "재킷 온수"),
-    (4, "A400", "시럽 배합", "T401~402"),
-    (5, "A500", "시럽 살균", "P201TC02"),
-    (6, "A600", "급속 칠링", "PHE301"),
-    (7, "A700", "MQI 충전", "서지/충전")
-]
+steps_data = []
+for s_idx, s_code, s_label, s_tag in step_defs:
+    if cur_step == 0:
+        s_state = "waiting"
+        s_dur = "대기"
+    elif cur_step > s_idx:
+        s_state = "completed"
+        s_dur = st.session_state.step_durations.get(f"Step_{s_idx}", "완료")
+    elif cur_step == s_idx:
+        s_state = "active"
+        s_dur = "계산 중"
+    else:
+        s_state = "waiting"
+        s_dur = "예정"
+    steps_data.append({
+        "index": s_idx,
+        "code": s_code,
+        "label": s_label,
+        "state": s_state,
+        "duration": s_dur
+    })
 
-for idx, (s_idx, s_code, s_label, s_tag) in enumerate(step_defs):
-    with step_cols[idx]:
-        if st.session_state.process_step == 0:
-            status_color = "#64748b"
-            bg_color = "#f8fafc"
-            border_color = "#cbd5e1"
-            dur_display = "대기"
-            badge = "대기"
-        elif st.session_state.process_step > s_idx:
-            status_color = "#15803d"
-            bg_color = "#f0fdf4"
-            border_color = "#86efac"
-            dur_display = st.session_state.step_durations.get(f"Step_{s_idx}", "완료")
-            badge = "완료"
-        elif st.session_state.process_step == s_idx:
-            status_color = "#0284c7"
-            bg_color = "#f0f9ff"
-            border_color = "#38bdf8"
-            s_start = st.session_state.step_entry_times.get(f"Step_{s_idx}", kst_now)
-            elapsed_sec = (kst_now - s_start).total_seconds()
-            dur_display = format_time_delta(elapsed_sec)
-            badge = "진행 중"
-        else:
-            status_color = "#94a3b8"
-            bg_color = "#f8fafc"
-            border_color = "#e2e8f0"
-            dur_display = "대기"
-            badge = "예정"
+steps_json_str = json.dumps(steps_data, ensure_ascii=False)
 
-        st.markdown(
-            f"""
-            <div style="padding: 10px; border-radius: 10px; background: {bg_color}; border: 1.5px solid {border_color}; text-align: center;">
-                <div style="font-size: 12px; font-weight: bold; color: {status_color};">{badge} | {s_code}</div>
-                <div style="font-size: 16px; font-weight: 900; color: #0f172a; margin: 3px 0;">{s_code} {dur_display}</div>
-                <div style="font-size: 12px; color: #64748b; font-weight: 600;">{s_label}</div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+stage_bar_component_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {{
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
+        }}
+        .grid-container {{
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 8px;
+            box-sizing: border-box;
+            height: 90px;
+        }}
+        .step-card {{
+            border-radius: 10px;
+            padding: 8px 4px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            box-sizing: border-box;
+            border-width: 1.5px;
+            border-style: solid;
+        }}
+        .state-waiting {{
+            background: #f8fafc;
+            border-color: #cbd5e1;
+            color: #64748b;
+        }}
+        .state-completed {{
+            background: #f0fdf4;
+            border-color: #86efac;
+            color: #15803d;
+        }}
+        .state-active {{
+            background: #eff6ff;
+            border-color: #3b82f6;
+            color: #1d4ed8;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+            animation: pulse-border 2s infinite;
+        }}
+        @keyframes pulse-border {{
+            0% {{ box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }}
+            70% {{ box-shadow: 0 0 0 5px rgba(59, 130, 246, 0); }}
+            100% {{ box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }}
+        }}
+        .badge {{
+            font-size: 11px;
+            font-weight: 800;
+        }}
+        .duration-text {{
+            font-size: 15px;
+            font-weight: 900;
+            margin: 2px 0;
+            color: #0f172a;
+            white-space: nowrap;
+        }}
+        .label {{
+            font-size: 11px;
+            color: #64748b;
+            font-weight: 600;
+        }}
+    </style>
+</head>
+<body>
+    <div class="grid-container" id="stage-grid"></div>
+    <script>
+        const steps = {steps_json_str};
+        const activeStepEpoch = {active_step_epoch};
+        const grid = document.getElementById('stage-grid');
+
+        function renderCards() {{
+            grid.innerHTML = '';
+            steps.forEach(s => {{
+                const card = document.createElement('div');
+                card.className = `step-card state-${{s.state}}`;
+                
+                let badgeTxt = '예정';
+                if (s.state === 'completed') badgeTxt = '완료';
+                if (s.state === 'active') badgeTxt = '진행 중';
+                if (s.state === 'waiting') badgeTxt = '대기';
+
+                card.innerHTML = `
+                    <div class="badge">${{badgeTxt}} | ${{s.code}}</div>
+                    <div class="duration-text" id="dur-text-${{s.index}}">${{s.code}} ${{s.duration}}</div>
+                    <div class="label">${{s.label}}</div>
+                `;
+                grid.appendChild(card);
+            }});
+        }}
+        renderCards();
+
+        function updateActiveDuration() {{
+            if (activeStepEpoch > 0) {{
+                const now = Date.now();
+                const diffSec = Math.max(0, Math.floor((now - activeStepEpoch) / 1000));
+                const m = Math.floor(diffSec / 60);
+                const s = diffSec % 60;
+                let txt = (m > 0) ? `${{m}}분 ${{s}}초` : `${{s}}초`;
+                const activeEl = document.getElementById('dur-text-{cur_step}');
+                if (activeEl) {{
+                    activeEl.innerText = '{active_step_code} ' + txt;
+                }}
+            }}
+        }}
+        if (activeStepEpoch > 0) {{
+            updateActiveDuration();
+            setInterval(updateActiveDuration, 1000);
+        }}
+    </script>
+</body>
+</html>
+"""
+components.html(stage_bar_component_html, height=92)
 
 st.divider()
 
 # =============================================================
-# STEP 0: 배치 착수 등록 (작업자 디폴트: 공장장)
+# STEP 0: 배치 착수 등록 (현재 착수 기준시각 텍스트 완전 삭제)
 # =============================================================
 if st.session_state.process_step == 0:
     st.subheader("[Step 0] 런 발효유 생산 배치 착수 등록")
@@ -519,10 +649,10 @@ if st.session_state.process_step == 0:
         worker_name = st.text_input("작업자 성명", value="공장장", placeholder="작업자명 입력")
         indoor_t = st.number_input("현재 발효실 실내온도 (℃)", 10.0, 40.0, 24.5, 0.1)
     with col3:
-        st.markdown(f"**현재 착수 기준시각 (KST):** `{format_korean_ampm(kst_now)}`")
         start_hour_val = round(float(kst_now.hour + kst_now.minute / 60.0), 1)
         clean_pname = "".join(filter(str.isalnum, product_name_input))
         batch_id_gen = f"{kst_now.strftime('%Y%m%d')}_{clean_pname}_{kst_now.strftime('%H%M')}"
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
         st.info(f"생성될 배치 ID: **{batch_id_gen}**")
 
     st.divider()
