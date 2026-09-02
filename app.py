@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.0
-• 우측 상단 대한민국 표준시(KST) 실시간 라이브 디지털 시계 (초단위 연속 갱신)
-• 배치 착수 후 총 경과시간(초단위 실시간 카운트업) 연동
-• 좌측 런 발효유 로고 / 중앙 기장군 외기온도 센터링 / 상단 7단계 소요시간 카드 바
-• A400(배합)·A500(살균) 분리, 작업자 디폴트 '공장장', 이전 단계 되돌리기 완비
+FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.1
+• 기상청 Open-Meteo API 통신 오류(User-Agent 헤더 차단 및 타임아웃) 완벽 해결
+• 우측 상단 대한민국 표준시(KST) 실시간 초단위 라이브 디지털 시계 & 총 경과시간 연동
+• 좌측 런 발효유 로고(75px) / 중앙 기장군 외기온도 센터링(75px) / 우측 시계(75px) 3단 정렬
+• 작업자 성명 기본값 '공장장' | 생산품목 '런 발효유' (수정 가능)
+• A400(시럽 배합) & A500(시럽 살균) 분리 및 상단 7단계 가로형 소요시간 카드 바 탑재
+• 오조작 방지용 [이전 단계로 되돌리기] 및 다차원 MQI 품질 로깅 체계 완비
 """
 import os
 import streamlit as st
@@ -34,7 +36,7 @@ def format_korean_ampm(dt_obj):
     return f"{ampm} {dt_obj.strftime('%H:%M:%S')}"
 
 def format_time_delta(seconds_total):
-    """소요 시간을 'X분' 또는 'X시간 Y분' 형태로 간결 변환"""
+    """소요 시간을 'X분' 또는 'X시간 Y분' 형태로 변환"""
     if seconds_total < 0:
         seconds_total = 0
     mins = int(seconds_total // 60)
@@ -55,8 +57,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 2. SQLite 데이터베이스 초기화
-DB_FILE = "ferma_scada_v60.db"
+# 2. SQLite 데이터베이스 초기화 (v6.1 신규 스키마 충돌 방지)
+DB_FILE = "ferma_scada_v61.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -139,7 +141,7 @@ def save_final_mqi(batch_id, duration, acidity, ph, visc, syn, taste, mqi, memo)
     c = conn.cursor()
     now_str = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute('''
-        INSERT INTO batch_mqi_final VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO batch_mqi_final VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (batch_id, now_str, duration, acidity, ph, visc, syn, taste, mqi, memo))
     c.execute("UPDATE batch_master SET status = 'COMPLETED' WHERE batch_id = ?", (batch_id,))
     conn.commit()
@@ -165,22 +167,32 @@ def get_all_completed_batches():
     conn.close()
     return df
 
-# 3. 기상청 API 연동 (부산 기장군 AWS 923)
-@st.cache_data(ttl=600)
+# 3. 부산 기장군 실시간 기상 데이터 수집 함수 (User-Agent 헤더 주입 및 최신 파라미터 적용)
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_gijang_weather():
+    url = (
+        "https://api.open-meteo.com/v1/forecast?"
+        "latitude=35.297&longitude=129.200&"
+        "current=temperature_2m&"
+        "daily=temperature_2m_max,temperature_2m_min&"
+        "timezone=Asia%2FSeoul"
+    )
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
     try:
-        url = (
-            "https://api.open-meteo.com/v1/forecast?"
-            "latitude=35.297&longitude=129.200&current_weather=true&"
-            "daily=temperature_2m_max,temperature_2m_min&timezone=Asia%2FSeoul"
-        )
-        res = requests.get(url, timeout=5).json()
-        curr_t = res["current_weather"]["temperature"]
-        min_t = res["daily"]["temperature_2m_min"][0]
-        max_t = res["daily"]["temperature_2m_max"][0]
-        return curr_t, min_t, max_t, "기상청 정상 연동"
-    except Exception:
-        return 12.0, 5.0, 18.0, "오프라인 기본 안전모드"
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            curr_t = float(data["current"]["temperature_2m"])
+            min_t = float(data["daily"]["temperature_2m_min"][0])
+            max_t = float(data["daily"]["temperature_2m_max"][0])
+            return curr_t, min_t, max_t, "기상청 정상 연동"
+        else:
+            return 24.5, 20.0, 29.0, f"기상 서버 지연 ({res.status_code})"
+    except Exception as e:
+        return 24.5, 20.0, 29.0, "네트워크 지연 모드"
 
 # 4. 4D 동적 최적화 및 배관 열손실 연산 엔진
 def calculate_optimal_temperatures(start_h, indoor_t, out_t, min_t, max_t):
@@ -228,13 +240,13 @@ if "step_durations" not in st.session_state:
 if "step_entry_times" not in st.session_state:
     st.session_state.step_entry_times = {}
 
-# 6. 상단 헤더: [좌측 런 이미지] | [중앙 기장군 외기온도] | [우측 KST 실시간 연속 시계]
+# 6. 상단 헤더 3단 정렬: [좌측 런 이미지] | [중앙 기장군 외기온도] | [우측 KST 실시간 연속 시계]
 curr_t, min_t, max_t, weather_status = fetch_gijang_weather()
 kst_now = get_kst_now()
 
 col_logo, col_info, col_clock = st.columns([1.0, 2.0, 1.2])
 
-# [좌측 상단: 런 발효유 이미지 - 75px]
+# [좌측 상단: 런 발효유 이미지 - 75px 고정]
 with col_logo:
     local_img_path = None
     for candidate in ["run.png", "run_logo.png", "run_yogurt.png"]:
@@ -259,7 +271,7 @@ with col_logo:
             unsafe_allow_html=True
         )
 
-# [중앙 상단: 기장군 실시간 외기온도 가운데 정렬 배치 - 75px]
+# [중앙 상단: 기장군 실시간 외기온도 가운데 정렬 배치 - 75px 고정]
 with col_info:
     st.markdown(
         f"""
@@ -277,7 +289,7 @@ with col_info:
         unsafe_allow_html=True
     )
 
-# [우측 상단: 자바스크립트 기반 실시간 초단위 라이브 시계 (75px 동일 높이)]
+# [우측 상단: 자바스크립트 기반 실시간 초단위 라이브 시계 - 75px 고정]
 with col_clock:
     start_epoch = 0
     if st.session_state.process_step > 0 and st.session_state.batch_start_dt:
@@ -348,7 +360,6 @@ with col_clock:
         <script>
             function updateClock() {{
                 const now = new Date();
-                // UTC 기준 +9시간 연산으로 KST 오차 없이 정확 추출
                 const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
                 const kst = new Date(utc + (9 * 3600000));
 
@@ -635,7 +646,7 @@ elif st.session_state.process_step == 3:
             st.rerun()
 
 # =============================================================
-# STEP 4: A400 공정 (시럽 배합 및 용해)
+# STEP 4: A400 공정 (시럽 배합 및 용해) - ★ 독립 분리
 # =============================================================
 elif st.session_state.process_step == 4:
     st.subheader(f"📍 [Step 4: A400] {st.session_state.product_name} 시럽 배합 및 용해 단계 (배치: {st.session_state.batch_id})")
@@ -672,7 +683,7 @@ elif st.session_state.process_step == 4:
             st.rerun()
 
 # =============================================================
-# STEP 5: A500 공정 (시럽 살균 및 냉각)
+# STEP 5: A500 공정 (시럽 살균 및 냉각) - ★ 독립 분리
 # =============================================================
 elif st.session_state.process_step == 5:
     st.subheader(f"📍 [Step 5: A500] {st.session_state.product_name} 시럽 전용 살균 및 냉각 단계 (배치: {st.session_state.batch_id})")
