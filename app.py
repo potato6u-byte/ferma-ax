@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.7
-• 런 발효유 배지 삭제
-• 상단 3단 동일 규격 카드: [기장군 외기온도] | [실내온도 입력·고정 카드] | [KST 라이브 시계]
-• 실내온도: 숫자 입력 후 Enter 키 또는 [입력] 클릭 시 즉시 고정 및 전 단계 상시 수정 가능 (수정 시 AI 즉각 연동)
-• 다음 단계 이동 시 첫 화면(Step 0) 기준 제원 팝업(@st.dialog) 자동 표출
-• 상단 7단계 실시간 활성 공정 타이머 바 탑재 및 구글 스프레드시트 영구 저장 연동
-• 전역 대형 폰트(Big Font) CSS 및 완전한 텍스트 전용(No-Icon) 인터페이스
+FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.8
+• 단계 전환 시 실내온도 재설정 모달 팝업(@st.dialog, dismissible=False) 강제 호출
+• 입력 즉시 해당 단계 실내온도 완전 잠금(Lock) 및 상단 헤더 수정 불가 처리
+• 확정된 실내온도를 AI 4D 동적 최적화 엔진에 즉시 반영하여 추천온도 실시간 재연산
+• 상단 3단 대형 카드: [기장군 외기온도] | [현재 실내온도 상태] | [KST 초단위 시계]
+• 상단 7단계 가로형 활성 공정 타이머 바 및 구글 스프레드시트 영구 저장 연동
+• 완전한 텍스트 전용(No-Icon) 인터페이스 및 전역 대형 폰트(Big Font) CSS 유지
 """
 import os
 import json
@@ -96,7 +96,6 @@ st.markdown("""
         line-height: 1.5 !important;
     }
 
-    /* 상단 실내온도 폼 카드: 시계 및 외기온도 카드와 동일 규격 스타일링 */
     div[data-testid="stForm"] {
         border: 1.5px solid #38bdf8 !important;
         border-radius: 10px !important;
@@ -334,8 +333,12 @@ if "step_entry_times" not in st.session_state:
 if "indoor_t" not in st.session_state:
     st.session_state.indoor_t = 24.5
 
-if "show_transition_modal" not in st.session_state:
-    st.session_state.show_transition_modal = None
+# 단계별 온도 잠금(Lock) 및 팝업 제어 상태
+if "temp_locked" not in st.session_state:
+    st.session_state.temp_locked = False
+
+if "show_temp_popup" not in st.session_state:
+    st.session_state.show_temp_popup = False
 
 curr_t, min_t, max_t, weather_status = fetch_gijang_weather()
 kst_now = get_kst_now()
@@ -346,9 +349,67 @@ if "calc_res" not in st.session_state:
         default_start_h, st.session_state.indoor_t, curr_t, min_t, max_t
     )
 
+step_defs = [
+    (1, "A100", "Base 배합", "T101~104"),
+    (2, "A200", "살균/냉각", "P101TC02"),
+    (3, "A300", "발효/보온", "재킷 온수"),
+    (4, "A400", "시럽 배합", "T401~402"),
+    (5, "A500", "시럽 살균", "P201TC02"),
+    (6, "A600", "급속 칠링", "PHE301"),
+    (7, "A700", "MQI 충전", "서지/충전")
+]
+
+cur_step = st.session_state.process_step
+
+# =============================================================
+# 6. 단계 전환 강제 모달 팝업 다이얼로그 정의 (@st.dialog)
+# =============================================================
+if hasattr(st, "dialog"):
+    @st.dialog("공정 진입: 실내온도 재설정 및 확정", dismissible=False)
+    def prompt_step_indoor_temp_dialog(step_n, s_code, s_name):
+        st.markdown(f"#### [{s_code} {s_name}] 단계 진입 안내")
+        st.markdown("---")
+        st.markdown(
+            "현재 작업장(발효실) 실내온도를 입력바람.<br>"
+            "한 번 **[온도 확정]**을 누르면 **해당 단계 진행 중에는 수정할 수 없으며**, "
+            "입력한 실내온도는 **AI 공정 추천온도 계산에 즉각 반영**됨.",
+            unsafe_allow_html=True
+        )
+        st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+        
+        pop_in_val = st.number_input(
+            "현재 발효실 실내온도 (℃)",
+            min_value=10.0,
+            max_value=40.0,
+            value=float(st.session_state.indoor_t),
+            step=0.1,
+            format="%.1f",
+            key=f"dialog_in_temp_{step_n}"
+        )
+        
+        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+        if st.button("온도 확정 및 공정 착수", type="primary", use_container_width=True):
+            st.session_state.indoor_t = pop_in_val
+            st.session_state.temp_locked = True
+            st.session_state.show_temp_popup = False
+            
+            # AI 추천온도 즉각 재계산
+            calc_h = st.session_state.get("start_hour", round(float(kst_now.hour + kst_now.minute / 60.0), 1))
+            st.session_state.calc_res = calculate_optimal_temperatures(
+                calc_h, pop_in_val, curr_t, min_t, max_t
+            )
+            st.rerun()
+
+# 팝업 호출 실행 (단계 이동 시 강제 오픈)
+if st.session_state.show_temp_popup and (1 <= cur_step <= 7):
+    code_now = step_defs[cur_step - 1][1]
+    name_now = step_defs[cur_step - 1][2]
+    if hasattr(st, "dialog"):
+        prompt_step_indoor_temp_dialog(cur_step, code_now, name_now)
+
 # -------------------------------------------------------------
-# 6. 상단 헤더 3단 정렬 (동일 크기·형태 카드 3개 나란히 배치)
-# [좌측: 기장군 외기온도] | [중앙: 현재 실내온도 입력/고정] | [우측: KST 라이브 시계]
+# 7. 상단 헤더 3단 정렬:
+# [좌측: 기장군 외기온도] | [중앙: 실내온도 상태/잠금 카드] | [우측: KST 라이브 시계]
 # -------------------------------------------------------------
 col_weather, col_indoor, col_clock = st.columns([1.0, 1.1, 1.3])
 
@@ -371,52 +432,62 @@ with col_weather:
         unsafe_allow_html=True
     )
 
-# [2. 중앙: 현재 실내온도 입력 및 고정 카드 (높이 100px 동일 크기·모양)]
+# [2. 중앙: 실내온도 상태 카드 (확정 시 수정 불가 잠금 처리, 미확정 시 입력 지원)]
 with col_indoor:
-    with st.form("quick_indoor_temp_form", clear_on_submit=False):
+    if st.session_state.temp_locked:
+        # 잠금 상태: 수정 불가 UI 표출
         st.markdown(
             f"""
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
-                <span style="font-size: 11px; color: #94a3b8; font-weight: bold;">현재 실내온도 설정</span>
-                <span style="font-size: 11px; color: #4ade80; font-weight: 800;">고정값: {st.session_state.indoor_t}℃</span>
+            <div style="height: 100px; text-align: center; padding: 10px 14px; background: #0f172a; border-radius: 10px; border: 1.5px solid #10b981; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-direction: column; justify-content: center; box-sizing: border-box;">
+                <div style="font-size: 11px; color: #94a3b8; font-weight: bold;">
+                    현재 실내온도 (확정 고정)
+                </div>
+                <div style="font-size: 25px; font-weight: 900; color: #34d399; font-family: monospace; line-height: 1.2; margin: 2px 0;">
+                    {st.session_state.indoor_t} ℃
+                </div>
+                <div style="font-size: 11px; color: #a7f3d0; font-weight: 700;">
+                    현재 단계 수정 불가 (잠금 완료)
+                </div>
             </div>
             """,
             unsafe_allow_html=True
         )
-        c_in_val, c_in_btn = st.columns([1.6, 1.0])
-        with c_in_val:
-            typed_in_temp = st.number_input(
-                "실내온도입력",
-                min_value=10.0,
-                max_value=40.0,
-                value=float(st.session_state.indoor_t),
-                step=0.1,
-                format="%.1f",
-                label_visibility="collapsed",
-                key="header_indoor_input_field"
+    else:
+        # 미확정 상태: 수치 입력 및 [입력] 버튼
+        with st.form("quick_indoor_temp_form", clear_on_submit=False):
+            st.markdown(
+                f"""
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                    <span style="font-size: 11px; color: #94a3b8; font-weight: bold;">실내온도 설정</span>
+                    <span style="font-size: 11px; color: #facc15; font-weight: 800;">확정 대기</span>
+                </div>
+                """,
+                unsafe_allow_html=True
             )
-        with c_in_btn:
-            submitted_lock = st.form_submit_button("입력", use_container_width=True)
-            if submitted_lock:
-                st.session_state.indoor_t = typed_in_temp
-                calc_h = st.session_state.get("start_hour", round(float(kst_now.hour + kst_now.minute / 60.0), 1))
-                st.session_state.calc_res = calculate_optimal_temperatures(
-                    calc_h, typed_in_temp, curr_t, min_t, max_t
+            c_in_val, c_in_btn = st.columns([1.6, 1.0])
+            with c_in_val:
+                typed_in_temp = st.number_input(
+                    "실내온도입력",
+                    min_value=10.0,
+                    max_value=40.0,
+                    value=float(st.session_state.indoor_t),
+                    step=0.1,
+                    format="%.1f",
+                    label_visibility="collapsed",
+                    key="header_indoor_input_field"
                 )
-                st.rerun()
+            with c_in_btn:
+                submitted_lock = st.form_submit_button("입력", use_container_width=True)
+                if submitted_lock:
+                    st.session_state.indoor_t = typed_in_temp
+                    st.session_state.temp_locked = True
+                    calc_h = st.session_state.get("start_hour", round(float(kst_now.hour + kst_now.minute / 60.0), 1))
+                    st.session_state.calc_res = calculate_optimal_temperatures(
+                        calc_h, typed_in_temp, curr_t, min_t, max_t
+                    )
+                    st.rerun()
 
-# [3. 우측: 대한민국 표준시(KST) 실시간 시계 + 총 경과 + 현재 단계 진행 모니터 (높이 100px)]
-step_defs = [
-    (1, "A100", "Base 배합", "T101~104"),
-    (2, "A200", "살균/냉각", "P101TC02"),
-    (3, "A300", "발효/보온", "재킷 온수"),
-    (4, "A400", "시럽 배합", "T401~402"),
-    (5, "A500", "시럽 살균", "P201TC02"),
-    (6, "A600", "급속 칠링", "PHE301"),
-    (7, "A700", "MQI 충전", "서지/충전")
-]
-
-cur_step = st.session_state.process_step
+# [3. 우측: 대한민국 표준시(KST) 라이브 시계 + 총 경과 + 현재 단계 진행 모니터 (높이 100px)]
 batch_start_epoch = int(st.session_state.batch_start_dt.timestamp() * 1000) if (cur_step > 0 and st.session_state.batch_start_dt) else 0
 
 active_step_code = ""
@@ -550,7 +621,7 @@ with col_clock:
 st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
 
 # -------------------------------------------------------------
-# 7. 상단 7단계 가로형 공정 바 (활성 공정 실시간 초단위 카운트다운)
+# 8. 상단 7단계 가로형 공정 바 (활성 공정 실시간 초단위 카운트다운)
 # -------------------------------------------------------------
 steps_data = []
 for s_idx, s_code, s_label, s_tag in step_defs:
@@ -701,41 +772,6 @@ components.html(stage_bar_component_html, height=92)
 st.divider()
 
 # =============================================================
-# 8. 다음 단계 전환 시 '첫 화면 제원 요약' 팝업 다이얼로그
-# =============================================================
-if hasattr(st, "dialog"):
-    @st.dialog("첫 화면 배치 제원 요약 안내")
-    def show_first_screen_summary_modal(from_c, to_c):
-        st.markdown(f"#### [{from_c}] 완료 확인 ➔ [{to_c}] 단계 진입")
-        st.markdown("---")
-        st.markdown("##### [첫 화면 (Step 0) 착수 기준 정보]")
-        
-        m_c1, m_c2 = st.columns(2)
-        with m_c1:
-            st.markdown(f"• **배치 ID:** `{st.session_state.batch_id}`")
-            st.markdown(f"• **생산 품목:** **{st.session_state.product_name}**")
-            st.markdown(f"• **담당 작업자:** **{st.session_state.worker_name}**")
-        with m_c2:
-            st.markdown(f"• **현재 고정 실내온도:** **{st.session_state.indoor_t} ℃**")
-            st.markdown(f"• **기장군 실시간 외기:** **{curr_t} ℃**")
-            st.markdown(f"• **배치 착수 시각:** `{st.session_state.start_time_korean}`")
-            
-        st.info("해당 공정 측정값이 영구 저장되었습니다. 상단 실내온도 설정란에서 언제든 수정 및 재고정이 가능함.")
-        
-        if st.button("확인 (공정 제어 계속 진행)", type="primary", use_container_width=True):
-            st.session_state.show_transition_modal = None
-            st.rerun()
-
-# 팝업 호출 트리거
-if st.session_state.show_transition_modal:
-    from_code_val, to_code_val = st.session_state.show_transition_modal
-    if hasattr(st, "dialog"):
-        show_first_screen_summary_modal(from_code_val, to_code_val)
-    else:
-        st.info(f"[{from_code_val} 완료 ➔ {to_code_val} 진입] 배치 ID: {st.session_state.batch_id} | 실내온도: {st.session_state.indoor_t}℃")
-        st.session_state.show_transition_modal = None
-
-# =============================================================
 # STEP 0: 배치 착수 등록
 # =============================================================
 if st.session_state.process_step == 0:
@@ -753,7 +789,7 @@ if st.session_state.process_step == 0:
         batch_id_gen = f"{kst_now.strftime('%Y%m%d')}_{clean_pname}_{kst_now.strftime('%H%M')}"
         st.info(f"생성될 배치 ID: **{batch_id_gen}**")
 
-    st.caption("발효실 실내온도는 상단 [현재 실내온도 설정] 카드에 수치를 입력하고 [입력] 키를 누르면 고정값으로 승계됨.")
+    st.caption("착수 실내온도는 상단 [실내온도 설정] 카드에 수치를 입력 후 [입력] 버튼을 누르면 고정값으로 승계됨.")
 
     st.divider()
     if st.button("이 설정으로 [배치 작업 시작 (A100 착수)]", type="primary", use_container_width=True):
@@ -772,6 +808,10 @@ if st.session_state.process_step == 0:
             st.session_state.start_hour = start_hour_val
             st.session_state.batch_start_dt = exact_kst_dt
             st.session_state.start_time_korean = start_korean_val
+            
+            # Step 1 진입 시 Step 0 설정 온도로 1차 확정 잠금
+            st.session_state.temp_locked = True
+            st.session_state.show_temp_popup = False
             
             st.session_state.step_entry_times["Step_1"] = exact_kst_dt
             
@@ -794,7 +834,7 @@ elif st.session_state.process_step == 1:
     st.markdown(f"""
     * **담당 구역:** 101~104호 베이스 배합탱크 및 분말 믹서 (MX101, 45.0 Hz)
     * **주요 작업:** **{st.session_state.product_name}** 원유 및 배합원료 계량 투입, 배합 탱크 교반 가동, 살균 라인 이송 밸브 점검
-    * **현재 고정 실내온도:** **{st.session_state.indoor_t} ℃** (상단 입력창에서 수정 시 AI 즉각 연동)
+    * **확정 실내온도:** **{st.session_state.indoor_t} ℃** (해당 단계 잠금 상태)
     """)
     
     col_a1, col_a2 = st.columns(2)
@@ -811,6 +851,8 @@ elif st.session_state.process_step == 1:
             st.session_state.batch_start_dt = None
             st.session_state.step_entry_times = {}
             st.session_state.step_durations = {}
+            st.session_state.temp_locked = False
+            st.session_state.show_temp_popup = False
             st.rerun()
     with c2:
         if st.button("A100 완료 [다음 단계 A200 살균/냉각 이동]", type="primary", use_container_width=True):
@@ -821,9 +863,11 @@ elif st.session_state.process_step == 1:
             
             log_step_temp(st.session_state.batch_id, "A100", "Base Mix 배합", step_dur_str, "T101~T104", 0.0, 0.0, mix_temp, mix_status)
             
+            # Step 2 이동: 잠금 해제 및 온도 재설정 팝업 트리거
             st.session_state.step_entry_times["Step_2"] = get_kst_now()
             st.session_state.process_step = 2
-            st.session_state.show_transition_modal = ("A100", "A200")
+            st.session_state.temp_locked = False
+            st.session_state.show_temp_popup = True
             st.rerun()
 
 # =============================================================
@@ -842,7 +886,7 @@ elif st.session_state.process_step == 2:
         st.caption("SCADA 태그: P101TC02.SP (A200 구역)")
     with c_rec2:
         st.info(f"""
-        * **환경 분석:** 실시간 외기 {curr_t}℃ / 발효실 실내 **{st.session_state.indoor_t}℃** (유효환경 {c_res['t_eff_early']}℃)
+        * **환경 분석:** 실시간 외기 {curr_t}℃ / 발효실 실내 **{st.session_state.indoor_t}℃** (유효환경 {c_res['t_eff_early']}℃ 반영)
         * **배관 이송 열손실:** 35m SUS 배관 통과 중 **+{c_res['delta_t_pipe']}℃** 손실 보정 반영됨.
         * **작업 지침:** 살균기 냉각 제어반(P101TC02)을 **{c_res['rec_cooling']}℃**로 설정하여 발효조로 투입바람. (동절기 41℃ 이상 과열 금지)
         """)
@@ -860,6 +904,8 @@ elif st.session_state.process_step == 2:
     with c1:
         if st.button("이전 단계로 되돌리기 (A100 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 1
+            st.session_state.temp_locked = True
+            st.session_state.show_temp_popup = False
             st.rerun()
     with c2:
         if st.button("A200 확인 기록 [A300 발효 이동]", type="primary", use_container_width=True):
@@ -871,9 +917,11 @@ elif st.session_state.process_step == 2:
             status_eval = "정상 설정" if abs(op_set_cool - c_res['rec_cooling']) <= 0.2 else "권장치 편차 설정"
             log_step_temp(st.session_state.batch_id, "A200", "살균냉각투입", step_dur_str, "P101TC02", c_res['rec_cooling'], op_set_cool, act_meas_cool, status_eval)
             
+            # Step 3 이동: 잠금 해제 및 온도 재설정 팝업 트리거
             st.session_state.step_entry_times["Step_3"] = get_kst_now()
             st.session_state.process_step = 3
-            st.session_state.show_transition_modal = ("A200", "A300")
+            st.session_state.temp_locked = False
+            st.session_state.show_temp_popup = True
             st.rerun()
 
 # =============================================================
@@ -910,6 +958,8 @@ elif st.session_state.process_step == 3:
     with c1:
         if st.button("이전 단계로 되돌리기 (A200 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 2
+            st.session_state.temp_locked = True
+            st.session_state.show_temp_popup = False
             st.rerun()
     with c2:
         if st.button("5H 점검 기록 [A400 시럽 배합 이동]", type="primary", use_container_width=True):
@@ -924,9 +974,12 @@ elif st.session_state.process_step == 3:
             
             st.session_state.acid_5h = acid_5h
             st.session_state.act_meas_5h = act_meas_5h
+            
+            # Step 4 이동: 잠금 해제 및 온도 재설정 팝업 트리거
             st.session_state.step_entry_times["Step_4"] = get_kst_now()
             st.session_state.process_step = 4
-            st.session_state.show_transition_modal = ("A300", "A400")
+            st.session_state.temp_locked = False
+            st.session_state.show_temp_popup = True
             st.rerun()
 
 # =============================================================
@@ -938,7 +991,7 @@ elif st.session_state.process_step == 4:
     st.markdown(f"""
     * **담당 구역:** 401~402호 시럽 배합탱크 (T401, T402) 및 파우더 믹서 펌프 (P401, P402 45.0 Hz)
     * **주요 작업:** **{st.session_state.product_name}** 전용 당류/과일 원료 투입, 고속 용해 교반, 배합액 균질성 및 당도(Brix) 점검
-    * **제어 지침:** 시럽 완전 용해 확인 후 A500 시럽 전용 살균기로 이송 개시
+    * **확정 실내온도:** **{st.session_state.indoor_t} ℃** (해당 단계 잠금 상태)
     """)
     
     col_s1, col_s2 = st.columns(2)
@@ -952,6 +1005,8 @@ elif st.session_state.process_step == 4:
     with c1:
         if st.button("이전 단계로 되돌리기 (A300 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 3
+            st.session_state.temp_locked = True
+            st.session_state.show_temp_popup = False
             st.rerun()
     with c2:
         if st.button("A400 완료 [다음 단계 A500 시럽 살균 이동]", type="primary", use_container_width=True):
@@ -962,9 +1017,11 @@ elif st.session_state.process_step == 4:
             
             log_step_temp(st.session_state.batch_id, "A400", "시럽배합용해", step_dur_str, "T401~T402", 24.5, 24.5, syrup_mix_t, f"당도 {syrup_brix} Brix")
             
+            # Step 5 이동: 잠금 해제 및 온도 재설정 팝업 트리거
             st.session_state.step_entry_times["Step_5"] = get_kst_now()
             st.session_state.process_step = 5
-            st.session_state.show_transition_modal = ("A400", "A500")
+            st.session_state.temp_locked = False
+            st.session_state.show_temp_popup = True
             st.rerun()
 
 # =============================================================
@@ -976,7 +1033,7 @@ elif st.session_state.process_step == 5:
     st.markdown(f"""
     * **담당 구역:** 시럽 전용 판형 살균기 (P201TC02, P2X2TC01) 및 전도도 센서 (P2B1CT02)
     * **주요 작업:** 85℃ 살균 유지 확인, 살균 후 급속 냉각(P2X4TT71, 목표 24.7℃), 이송 배관 세니타이제이션 점검
-    * **제어 지침:** 냉각 완료 시럽을 A600 블렌딩 라인으로 공급 대기
+    * **확정 실내온도:** **{st.session_state.indoor_t} ℃** (해당 단계 잠금 상태)
     """)
     
     col_p1, col_p2 = st.columns(2)
@@ -990,6 +1047,8 @@ elif st.session_state.process_step == 5:
     with c1:
         if st.button("이전 단계로 되돌리기 (A400 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 4
+            st.session_state.temp_locked = True
+            st.session_state.show_temp_popup = False
             st.rerun()
     with c2:
         if st.button("A500 완료 [다음 단계 A600 블렌딩/칠링 이동]", type="primary", use_container_width=True):
@@ -1000,9 +1059,11 @@ elif st.session_state.process_step == 5:
             
             log_step_temp(st.session_state.batch_id, "A500", "시럽살균냉각", step_dur_str, "P201TC02", 85.0, syrup_pasteur_t, syrup_cool_t, f"냉각 {syrup_cool_t}℃ 완료")
             
+            # Step 6 이동: 잠금 해제 및 온도 재설정 팝업 트리거
             st.session_state.step_entry_times["Step_6"] = get_kst_now()
             st.session_state.process_step = 6
-            st.session_state.show_transition_modal = ("A500", "A600")
+            st.session_state.temp_locked = False
+            st.session_state.show_temp_popup = True
             st.rerun()
 
 # =============================================================
@@ -1044,6 +1105,8 @@ elif st.session_state.process_step == 6:
     with c1:
         if st.button("이전 단계로 되돌리기 (A500 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 5
+            st.session_state.temp_locked = True
+            st.session_state.show_temp_popup = False
             st.rerun()
     with c2:
         if st.button("A600 냉각 확인 [A700 충전/MQI QC 이동]", type="primary", use_container_width=True):
@@ -1056,9 +1119,12 @@ elif st.session_state.process_step == 6:
             
             st.session_state.act_dur_min = act_dur_min
             st.session_state.phe_out_t = phe_out_t
+            
+            # Step 7 이동: 잠금 해제 및 온도 재설정 팝업 트리거
             st.session_state.step_entry_times["Step_7"] = get_kst_now()
             st.session_state.process_step = 7
-            st.session_state.show_transition_modal = ("A600", "A700")
+            st.session_state.temp_locked = False
+            st.session_state.show_temp_popup = True
             st.rerun()
 
 # =============================================================
@@ -1103,6 +1169,8 @@ elif st.session_state.process_step == 7:
     with c1:
         if st.button("이전 단계로 되돌리기 (A600 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 6
+            st.session_state.temp_locked = True
+            st.session_state.show_temp_popup = False
             st.rerun()
     with c2:
         if st.button("전체 공정 최종 종결 및 DB/구글 시트 영구 저장", type="primary", use_container_width=True):
@@ -1181,5 +1249,6 @@ elif st.session_state.process_step == 8:
         st.session_state.step_durations = {}
         st.session_state.start_time_korean = ""
         st.session_state.gsheet_status = ""
-        st.session_state.show_transition_modal = None
+        st.session_state.temp_locked = False
+        st.session_state.show_temp_popup = False
         st.rerun()
