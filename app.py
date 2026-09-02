@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.3
-• 앱 내 모든 그래픽/이모지 아이콘 제거 (순수 텍스트 인터페이스)
+FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.4
+• 구글 스프레드시트(Apps Script Webhook) 실시간 클라우드 영구 누적 저장 연동
+• 앱 내 모든 아이콘 제거 (순수 텍스트 인터페이스)
 • 현장 시인성 전역 대형 폰트(Big Font) CSS 유지
 • 우측 상단 대한민국 표준시(KST) 실시간 초단위 라이브 시계 및 총 경과시간 연동
 • 상단 7단계 소요시간 카드 바, A400/A500 독립 분리, 이전 단계 되돌리기 완비
 """
 import os
+import json
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -14,6 +16,11 @@ import numpy as np
 import requests
 import sqlite3
 from datetime import datetime, date, timedelta, timezone
+
+# =============================================================
+# ★ 구글 스프레드시트 웹 앱 URL 설정 (복사한 주소를 여기에 붙여넣음)
+# =============================================================
+GSHEET_WEBHOOK_URL = "여기에_복사한_웹앱_URL을_붙여넣으세요"
 
 # 0. 대한민국 표준시(KST) 타임존 및 시각 함수
 try:
@@ -57,38 +64,32 @@ st.set_page_config(
 # [글자 크기 대폭 확대를 위한 전역 커스텀 CSS]
 st.markdown("""
 <style>
-    /* 1. 기본 본문 및 전역 텍스트 확대 */
     html, body, [class*="css"] {
         font-size: 17px !important;
     }
-    /* 2. 입력 폼 레이블 글자 확대 */
     .stTextInput label, .stNumberInput label, .stSelectbox label, .stSlider label {
         font-size: 1.15rem !important;
         font-weight: 700 !important;
         color: #0f172a !important;
         margin-bottom: 4px !important;
     }
-    /* 3. 입력 필드 내부 수치/텍스트 확대 */
     .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {
         font-size: 1.25rem !important;
         font-weight: 700 !important;
         padding: 0.5rem 0.75rem !important;
     }
-    /* 4. 터치 버튼 글자 및 패딩 확대 */
     .stButton button {
         font-size: 1.25rem !important;
         font-weight: 800 !important;
         padding: 0.65rem 1.2rem !important;
         border-radius: 8px !important;
     }
-    /* 5. 헤딩 타이틀 계열 크기 보정 */
     h1 { font-size: 2.2rem !important; }
     h2 { font-size: 1.85rem !important; }
     h3 { font-size: 1.55rem !important; }
     h4 { font-size: 1.35rem !important; }
     h5 { font-size: 1.2rem !important; }
     p, li { font-size: 1.1rem !important; line-height: 1.5 !important; }
-    /* 6. 알림/인포 박스 텍스트 확대 */
     .stAlert p {
         font-size: 1.1rem !important;
         line-height: 1.5 !important;
@@ -97,7 +98,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 2. SQLite 데이터베이스 초기화
-DB_FILE = "ferma_scada_v63.db"
+DB_FILE = "ferma_master_history.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -175,12 +176,25 @@ def log_step_temp(batch_id, step_code, step_name, step_dur_str, scada_tag, ai_re
     conn.commit()
     conn.close()
 
+def send_to_google_sheet(payload):
+    """구글 스프레드시트 웹훅으로 실시간 데이터 전송"""
+    if not GSHEET_WEBHOOK_URL or "AKfycbyHVyENzMqJUb7JX9PJ_QQC_yMeZGga4rfhLJrfxFudHxZB05hnrqJRedZG_Acn0ozR" in GSHEET_WEBHOOK_URL:
+        return False, "구글 시트 URL 미설정"
+    try:
+        res = requests.post(GSHEET_WEBHOOK_URL, json=payload, timeout=8)
+        if res.status_code == 200:
+            return True, "구글 시트 영구 저장 완료"
+        else:
+            return False, f"구글 응답 오류: {res.status_code}"
+    except Exception as e:
+        return False, f"네트워크 지연: {str(e)[:15]}"
+
 def save_final_mqi(batch_id, duration, acidity, ph, visc, syn, taste, mqi, memo):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     now_str = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute('''
-        INSERT INTO batch_mqi_final VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO batch_mqi_final VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (batch_id, now_str, duration, acidity, ph, visc, syn, taste, mqi, memo))
     c.execute("UPDATE batch_master SET status = 'COMPLETED' WHERE batch_id = ?", (batch_id,))
     conn.commit()
@@ -279,7 +293,7 @@ if "step_durations" not in st.session_state:
 if "step_entry_times" not in st.session_state:
     st.session_state.step_entry_times = {}
 
-# 6. 상단 헤더 3단 정렬 (텍스트 전용)
+# 6. 상단 헤더 3단 정렬
 curr_t, min_t, max_t, weather_status = fetch_gijang_weather()
 kst_now = get_kst_now()
 
@@ -549,9 +563,9 @@ elif st.session_state.process_step == 1:
     st.subheader(f"[Step 1: A100] {st.session_state.product_name} Base Mix 배합 단계 (배치: {st.session_state.batch_id})")
     
     st.markdown(f"""
-    * **담당 구역:** 101~104호 베이스 배합탱크 및 분말 믹서 (MX101, 45.0 Hz)[cite: 3]
-    * **주요 작업:** **{st.session_state.product_name}** 원유 및 배합원료 계량 투입, 배합 탱크 교반 가동, 살균 라인 이송 밸브 점검[cite: 3]
-    * **제어 지침:** 원유 초기 온도 확인 후 A200 살균기 이송 준비 완료 확인[cite: 3]
+    * **담당 구역:** 101~104호 베이스 배합탱크 및 분말 믹서 (MX101, 45.0 Hz)
+    * **주요 작업:** **{st.session_state.product_name}** 원유 및 배합원료 계량 투입, 배합 탱크 교반 가동, 살균 라인 이송 밸브 점검
+    * **제어 지침:** 원유 초기 온도 확인 후 A200 살균기 이송 준비 완료 확인
     """)
     
     col_a1, col_a2 = st.columns(2)
@@ -583,7 +597,7 @@ elif st.session_state.process_step == 1:
             st.rerun()
 
 # =============================================================
-# STEP 2: A200 공정 (살균냉각 및 투입) - AI 추천온도 제어점 1
+# STEP 2: A200 공정 (살균냉각 및 투입)
 # =============================================================
 elif st.session_state.process_step == 2:
     st.subheader(f"[Step 2: A200] {st.session_state.product_name} 살균 및 냉각 투입 단계 (배치: {st.session_state.batch_id})")
@@ -632,7 +646,7 @@ elif st.session_state.process_step == 2:
             st.rerun()
 
 # =============================================================
-# STEP 3: A300 공정 (발효 및 재킷 보온) - AI 추천온도 제어점 2
+# STEP 3: A300 공정 (발효 및 재킷 보온)
 # =============================================================
 elif st.session_state.process_step == 3:
     st.subheader(f"[Step 3: A300] {st.session_state.product_name} 발효 및 재킷 보온 제어 (배치: {st.session_state.batch_id})")
@@ -690,9 +704,9 @@ elif st.session_state.process_step == 4:
     st.subheader(f"[Step 4: A400] {st.session_state.product_name} 시럽 배합 및 용해 단계 (배치: {st.session_state.batch_id})")
     
     st.markdown(f"""
-    * **담당 구역:** 401~402호 시럽 배합탱크 (T401, T402) 및 파우더 믹서 펌프 (P401, P402 45.0 Hz)[cite: 3]
-    * **주요 작업:** **{st.session_state.product_name}** 전용 당류/과일 원료 투입, 고속 용해 교반, 배합액 균질성 및 당도(Brix) 점검[cite: 3]
-    * **제어 지침:** 시럽 완전 용해 확인 후 A500 시럽 전용 살균기로 이송 개시[cite: 3]
+    * **담당 구역:** 401~402호 시럽 배합탱크 (T401, T402) 및 파우더 믹서 펌프 (P401, P402 45.0 Hz)
+    * **주요 작업:** **{st.session_state.product_name}** 전용 당류/과일 원료 투입, 고속 용해 교반, 배합액 균질성 및 당도(Brix) 점검
+    * **제어 지침:** 시럽 완전 용해 확인 후 A500 시럽 전용 살균기로 이송 개시
     """)
     
     col_s1, col_s2 = st.columns(2)
@@ -727,9 +741,9 @@ elif st.session_state.process_step == 5:
     st.subheader(f"[Step 5: A500] {st.session_state.product_name} 시럽 전용 살균 및 냉각 단계 (배치: {st.session_state.batch_id})")
     
     st.markdown(f"""
-    * **담당 구역:** 시럽 전용 판형 살균기 (P201TC02, P2X2TC01) 및 전도도 센서 (P2B1CT02)[cite: 3]
-    * **주요 작업:** 85℃ 살균 유지 확인, 살균 후 급속 냉각(P2X4TT71, 목표 24.7℃), 이송 배관 세니타이제이션 점검[cite: 3]
-    * **제어 지침:** 냉각 완료 시럽을 A600 블렌딩 라인으로 공급 대기[cite: 3]
+    * **담당 구역:** 시럽 전용 판형 살균기 (P201TC02, P2X2TC01) 및 전도도 센서 (P2B1CT02)
+    * **주요 작업:** 85℃ 살균 유지 확인, 살균 후 급속 냉각(P2X4TT71, 목표 24.7℃), 이송 배관 세니타이제이션 점검
+    * **제어 지침:** 냉각 완료 시럽을 A600 블렌딩 라인으로 공급 대기
     """)
     
     col_p1, col_p2 = st.columns(2)
@@ -758,7 +772,7 @@ elif st.session_state.process_step == 5:
             st.rerun()
 
 # =============================================================
-# STEP 6: A600 공정 (블렌딩 및 선행 급속 냉각) - AI 추천온도 제어점 3
+# STEP 6: A600 공정 (블렌딩 및 선행 급속 냉각)
 # =============================================================
 elif st.session_state.process_step == 6:
     st.subheader(f"[Step 6: A600] {st.session_state.product_name} 블렌딩 및 PHE301 급속 냉각 (배치: {st.session_state.batch_id})")
@@ -807,16 +821,17 @@ elif st.session_state.process_step == 6:
             log_step_temp(st.session_state.batch_id, "A600", "PHE301급속냉각", step_dur_str, "PHE301STT02", 7.3, 7.3, phe_out_t, f"{act_dur_min}분 시점 냉각 개시")
             
             st.session_state.act_dur_min = act_dur_min
+            st.session_state.phe_out_t = phe_out_t
             st.session_state.step_entry_times["Step_7"] = get_kst_now()
             st.session_state.process_step = 7
             st.rerun()
 
 # =============================================================
-# STEP 7: A700 공정 (서지탱크/충전 & 다차원 MQI 품질 검증)
+# STEP 7: A700 공정 (서지탱크/충전 & 다차원 MQI 품질 검증 및 구글 시트 저장)
 # =============================================================
 elif st.session_state.process_step == 7:
     st.subheader(f"[Step 7: A700] {st.session_state.product_name} 서지탱크 충전 & 다차원 품질검증 (배치: {st.session_state.batch_id})")
-    st.info(f"{st.session_state.product_name} 완제품의 이화학(산도·pH), 물성(점도·유청분리), 관능(맛) 점수를 종합 평가하여 DB에 영구 기록함.")
+    st.info(f"{st.session_state.product_name} 완제품의 이화학(산도·pH), 물성(점도·유청분리), 관능(맛) 점수를 종합 평가하여 로컬 DB 및 구글 시트에 영구 기록함.")
     
     st.markdown("##### 1. 이화학 지표 (Chemical)")
     q1, q2, q3 = st.columns(3)
@@ -855,17 +870,41 @@ elif st.session_state.process_step == 7:
             st.session_state.process_step = 6
             st.rerun()
     with c2:
-        if st.button("전체 공정 최종 종결 및 DB 영구 저장", type="primary", use_container_width=True):
+        if st.button("전체 공정 최종 종결 및 DB/구글 시트 영구 저장", type="primary", use_container_width=True):
             s7_start = st.session_state.step_entry_times.get("Step_7", kst_now)
             step_sec = (kst_now - s7_start).total_seconds()
             step_dur_str = format_time_delta(step_sec)
             st.session_state.step_durations["Step_7"] = step_dur_str
             
             log_step_temp(st.session_state.batch_id, "A700", "서지충전&MQI", step_dur_str, "701~705호", 7.3, 7.3, 7.3, f"MQI {mqi_total}점")
+            
+            # 1. 로컬 SQLite DB 영구 저장
             save_final_mqi(
                 st.session_state.batch_id, f_total_dur, f_acid, f_ph,
                 f_visc, f_syn, f_taste, mqi_total, f_memo
             )
+            
+            # 2. 구글 스프레드시트 실시간 클라우드 전송
+            gsheet_payload = {
+                "batch_id": st.session_state.batch_id,
+                "product_name": st.session_state.product_name,
+                "worker_name": st.session_state.worker_name,
+                "start_time": st.session_state.start_time_korean,
+                "cooling_temp": st.session_state.calc_res.get('rec_cooling', 39.3),
+                "hotwater_temp": st.session_state.calc_res.get('rec_hotwater', 38.3),
+                "phe_temp": getattr(st.session_state, 'phe_out_t', 7.3),
+                "duration": f_total_dur,
+                "acidity": f_acid,
+                "ph": f_ph,
+                "viscosity": f_visc,
+                "syneresis": f_syn,
+                "taste": f_taste,
+                "mqi_score": mqi_total,
+                "memo": f_memo
+            }
+            g_success, g_msg = send_to_google_sheet(gsheet_payload)
+            st.session_state.gsheet_status = g_msg
+            
             st.session_state.process_step = 8
             st.rerun()
 
@@ -875,6 +914,12 @@ elif st.session_state.process_step == 7:
 elif st.session_state.process_step == 8:
     st.success(f"[{st.session_state.product_name}] 배치 [{st.session_state.batch_id}] 공정이 성공적으로 종결되었으며 모든 단계별 온도 및 소요시간 이력이 기록되었음.")
     
+    g_status = getattr(st.session_state, 'gsheet_status', '구글 시트 연동 대기')
+    if "완료" in g_status:
+        st.info(f"구글 스프레드시트 연동: {g_status}")
+    else:
+        st.warning(f"구글 스프레드시트 상태: {g_status}")
+
     tab_r1, tab_r2 = st.tabs(["이번 배치 공정 단계별 온도 및 소요시간 이력", "누적 완료 배치 관리"])
     
     with tab_r1:
@@ -902,4 +947,5 @@ elif st.session_state.process_step == 8:
         st.session_state.step_entry_times = {}
         st.session_state.step_durations = {}
         st.session_state.start_time_korean = ""
+        st.session_state.gsheet_status = ""
         st.rerun()
