@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.5
-• '현재 착수 기준시각' 삭제 ➔ 전체 총 경과 및 현재 단계 실시간 시간 흐름 초단위 연동
-• 상단 7단계 공정 카드 바: 현재 활성 공정(Active Card) 실시간 라이브 타이머 탑재
-• 우측 상단: 대한민국 표준시(KST) 라이브 시계 + 전체 총 경과시간 + 현재 단계 소요시간 3단 실시간 모니터링
-• 구글 스프레드시트(Apps Script Webhook) 영구 누적 저장 연동
+FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.6
+• 좌측 상단: '런 발효유' 배지 및 바로 밑 실시간 외기온도 고정 수직 배치
+• 중앙 상단: '발효실 실내온도' 상시 입력란 배치 (첫 페이지 기본값 설정 및 전 단계 고정 승계, 실시간 수정 시 AI 추천온도 즉각 재계산)
+• 첫 페이지(Step 0): 착수 실내온도 입력 및 상단 헤더 양방향 실시간 동기화
+• 우측 상단: 대한민국 표준시(KST) 라이브 시계 + 총 경과시간 + 현재 단계 소요시간 실시간 연동
+• 상단 7단계 가로형 소요시간 카드 바, A400/A500 분리, 이전 단계 되돌리기 완비
 • 앱 내 모든 아이콘 제거 (순수 텍스트 인터페이스) 및 전역 대형 폰트(Big Font) CSS 유지
 """
 import os
@@ -277,7 +278,7 @@ def calculate_optimal_temperatures(start_h, indoor_t, out_t, min_t, max_t):
         "t_eff_late": round(t_eff_late, 1)
     }
 
-# 5. 세션 상태 관리
+# 5. 세션 상태 관리 (실내온도 초기값 24.5℃ 기본 탑재)
 if "process_step" not in st.session_state:
     st.session_state.process_step = 0
 
@@ -293,14 +294,29 @@ if "step_durations" not in st.session_state:
 if "step_entry_times" not in st.session_state:
     st.session_state.step_entry_times = {}
 
-# 6. 상단 헤더 3단 정렬
+if "indoor_t" not in st.session_state:
+    st.session_state.indoor_t = 24.5
+
 curr_t, min_t, max_t, weather_status = fetch_gijang_weather()
 kst_now = get_kst_now()
 
-col_logo, col_info, col_clock = st.columns([1.0, 1.8, 1.4])
+# AI 추천온도 객체 초기화 (존재하지 않을 경우 선행 연산)
+if "calc_res" not in st.session_state:
+    default_start_h = round(float(kst_now.hour + kst_now.minute / 60.0), 1)
+    st.session_state.calc_res = calculate_optimal_temperatures(
+        default_start_h, st.session_state.indoor_t, curr_t, min_t, max_t
+    )
 
-# [좌측 상단: 브랜드 텍스트 배지]
-with col_logo:
+# -------------------------------------------------------------
+# 6. 상단 헤더 3단 정렬:
+# [좌측: 런 발효유 + 바로 밑 실시간 외기온도]
+# [중앙: 전 공정 연동 실시간 실내온도 입력란]
+# [우측: KST 초단위 라이브 시계 + 경과시간]
+# -------------------------------------------------------------
+col_logo_weather, col_indoor, col_clock = st.columns([1.3, 1.1, 1.4])
+
+# [좌측 상단: 런 발효유 배지 + 바로 밑 실시간 외기온도 수직 결합 (높이 105px)]
+with col_logo_weather:
     local_img_path = None
     for candidate in ["run.png", "run_logo.png", "run_yogurt.png"]:
         if os.path.exists(candidate):
@@ -308,40 +324,70 @@ with col_logo:
             break
 
     if local_img_path:
-        st.image(local_img_path, height=95)
+        st.image(local_img_path, height=48)
     else:
         st.markdown(
             """
-            <div style="height: 95px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #ffffff 0%, #fff1f2 100%); border-radius: 12px; border: 2px solid #e11d48; box-shadow: 0 4px 6px rgba(225,29,72,0.1); padding: 0 16px;">
-                <div style="line-height: 1.15; text-align: center;">
-                    <span style="font-size: 26px; font-weight: 900; color: #e11d48; letter-spacing: -0.5px;">RUN</span>
-                    <span style="font-size: 18px; font-weight: 800; color: #1e293b; margin-left: 4px;">런 발효유</span><br>
-                    <span style="font-size: 13px; color: #64748b; font-weight: 600;">스마트 발효공정 제어</span>
-                </div>
+            <div style="height: 48px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #ffffff 0%, #fff1f2 100%); border-radius: 8px; border: 2px solid #e11d48; padding: 0 10px;">
+                <span style="font-size: 22px; font-weight: 900; color: #e11d48; letter-spacing: -0.5px;">RUN</span>
+                <span style="font-size: 16px; font-weight: 800; color: #1e293b; margin-left: 6px;">런 발효유</span>
             </div>
             """,
             unsafe_allow_html=True
         )
 
-# [중앙 상단: 기장군 실시간 외기온도]
-with col_info:
     st.markdown(
         f"""
-        <div style="height: 95px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: #f8fafc; border-radius: 12px; border: 1.5px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
-            <div style="font-size: 14px; color: #64748b; font-weight: 800; display: flex; align-items: center; gap: 6px;">
-                <span>부산 기장군 실시간 외기</span>
-                <span style="color: #0284c7; font-size: 13px; font-weight: 700;">({weather_status})</span>
-            </div>
-            <div style="font-size: 28px; font-weight: 900; color: #0f172a; margin: 2px 0;">
+        <div style="height: 50px; margin-top: 5px; display: flex; flex-direction: column; justify-content: center; align-items: center; background: #f8fafc; border-radius: 8px; border: 1.5px solid #e2e8f0; padding: 2px 8px;">
+            <div style="font-size: 11px; color: #64748b; font-weight: 700;">기장군 실시간 외기 ({weather_status})</div>
+            <div style="font-size: 16px; font-weight: 900; color: #0f172a; line-height: 1.1;">
                 <span style="color: #e11d48;">{curr_t}℃</span>
-                <span style="font-size: 16px; font-weight: 800; color: #475569; margin-left: 8px;">(최저 {min_t}℃ ~ 최고 {max_t}℃)</span>
+                <span style="font-size: 12px; font-weight: 700; color: #64748b; margin-left: 4px;">({min_t}℃ ~ {max_t}℃)</span>
             </div>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-# [우측 상단: 실시간 초단위 라이브 KST 시계 + 총 경과 + 현재 단계 진행 모니터]
+# [중앙 상단: 모든 단계에서 입력/수정 가능한 실내온도 제어 위젯 (높이 105px 매칭)]
+with col_indoor:
+    st.markdown(
+        """
+        <div style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 3px;">
+            발효실 실내온도 (℃)
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    new_in_t = st.number_input(
+        "발효실 실내온도",
+        min_value=10.0,
+        max_value=40.0,
+        value=float(st.session_state.indoor_t),
+        step=0.1,
+        format="%.1f",
+        label_visibility="collapsed",
+        key="global_header_indoor_t"
+    )
+    # 작업자가 상단에서 실내온도를 변경하면 전역 세션 갱신 및 AI 추천온도 즉시 재연산
+    if abs(new_in_t - st.session_state.indoor_t) > 0.01:
+        st.session_state.indoor_t = new_in_t
+        calc_start_h = st.session_state.get("start_hour", round(float(kst_now.hour + kst_now.minute / 60.0), 1))
+        st.session_state.calc_res = calculate_optimal_temperatures(
+            calc_start_h, new_in_t, curr_t, min_t, max_t
+        )
+        st.rerun()
+
+    st.markdown(
+        f"""
+        <div style="font-size: 11px; color: #0284c7; font-weight: 700; margin-top: 4px;">
+            전 공정 고정 승계값: <b>{st.session_state.indoor_t}℃</b> (수정 시 AI 즉각 반영)
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# [우측 상단: 실시간 초단위 라이브 KST 시계 + 총 경과 + 현재 단계 진행 모니터 (높이 105px)]
 step_defs = [
     (1, "A100", "Base 배합", "T101~104"),
     (2, "A200", "살균/냉각", "P101TC02"),
@@ -379,11 +425,11 @@ with col_clock:
                 font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
             }}
             .clock-card {{
-                height: 95px;
+                height: 105px;
                 text-align: right;
-                padding: 7px 14px;
+                padding: 8px 14px;
                 background: #0f172a;
-                border-radius: 12px;
+                border-radius: 10px;
                 border: 1.5px solid #38bdf8;
                 box-shadow: 0 4px 6px rgba(0,0,0,0.1);
                 display: flex;
@@ -404,6 +450,7 @@ with col_clock:
                 font-family: monospace;
                 letter-spacing: 1px;
                 line-height: 1.15;
+                margin-top: 1px;
             }}
             .ampm {{
                 font-size: 12px;
@@ -480,12 +527,12 @@ with col_clock:
     </body>
     </html>
     """
-    components.html(clock_component_html, height=95)
+    components.html(clock_component_html, height=105)
 
 st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
 
 # -------------------------------------------------------------
-# 상단 7단계 가로형 공정 바 (활성 단계 실시간 초단위 카운트다운/업 탑재)
+# 상단 7단계 가로형 공정 바 (활성 단계 실시간 초단위 카운트다운/업)
 # -------------------------------------------------------------
 steps_data = []
 for s_idx, s_code, s_label, s_tag in step_defs:
@@ -636,7 +683,7 @@ components.html(stage_bar_component_html, height=92)
 st.divider()
 
 # =============================================================
-# STEP 0: 배치 착수 등록 (현재 착수 기준시각 텍스트 완전 삭제)
+# STEP 0: 배치 착수 등록 (첫 페이지 실내온도 입력란 구비 및 상단과 동기화)
 # =============================================================
 if st.session_state.process_step == 0:
     st.subheader("[Step 0] 런 발효유 생산 배치 착수 등록")
@@ -647,7 +694,20 @@ if st.session_state.process_step == 0:
         target_tank = "A300 발효탱크"
     with col2:
         worker_name = st.text_input("작업자 성명", value="공장장", placeholder="작업자명 입력")
-        indoor_t = st.number_input("현재 발효실 실내온도 (℃)", 10.0, 40.0, 24.5, 0.1)
+        # 첫 페이지 본문 실내온도 입력란 (상단 헤더 값과 양방향 자동 연동)
+        step0_in_t = st.number_input(
+            "현재 발효실 실내온도 (℃)",
+            10.0, 40.0, float(st.session_state.indoor_t), 0.1,
+            key="step0_indoor_t_input"
+        )
+        if abs(step0_in_t - st.session_state.indoor_t) > 0.01:
+            st.session_state.indoor_t = step0_in_t
+            start_hour_calc = round(float(kst_now.hour + kst_now.minute / 60.0), 1)
+            st.session_state.calc_res = calculate_optimal_temperatures(
+                start_hour_calc, step0_in_t, curr_t, min_t, max_t
+            )
+            st.rerun()
+
     with col3:
         start_hour_val = round(float(kst_now.hour + kst_now.minute / 60.0), 1)
         clean_pname = "".join(filter(str.isalnum, product_name_input))
@@ -669,19 +729,19 @@ if st.session_state.process_step == 0:
             st.session_state.product_name = product_name_input.strip()
             st.session_state.target_tank = target_tank
             st.session_state.worker_name = worker_name.strip()
-            st.session_state.indoor_t = indoor_t
             st.session_state.start_hour = start_hour_val
             st.session_state.batch_start_dt = exact_kst_dt
             st.session_state.start_time_korean = start_korean_val
             
             st.session_state.step_entry_times["Step_1"] = exact_kst_dt
             
-            calc_res = calculate_optimal_temperatures(start_hour_val, indoor_t, curr_t, min_t, max_t)
+            # AI 추천온도 확정 연산
+            calc_res = calculate_optimal_temperatures(start_hour_val, st.session_state.indoor_t, curr_t, min_t, max_t)
             st.session_state.calc_res = calc_res
             
             save_batch_start(
                 batch_id_gen, product_name_input.strip(), target_tank, worker_name.strip(),
-                exact_kst_dt.strftime("%Y-%m-%d %H:%M:%S"), start_korean_val, curr_t, indoor_t
+                exact_kst_dt.strftime("%Y-%m-%d %H:%M:%S"), start_korean_val, curr_t, st.session_state.indoor_t
             )
             st.session_state.process_step = 1
             st.rerun()
@@ -695,7 +755,7 @@ elif st.session_state.process_step == 1:
     st.markdown(f"""
     * **담당 구역:** 101~104호 베이스 배합탱크 및 분말 믹서 (MX101, 45.0 Hz)
     * **주요 작업:** **{st.session_state.product_name}** 원유 및 배합원료 계량 투입, 배합 탱크 교반 가동, 살균 라인 이송 밸브 점검
-    * **제어 지침:** 원유 초기 온도 확인 후 A200 살균기 이송 준비 완료 확인
+    * **현재 발효실 실내온도 고정값:** **{st.session_state.indoor_t} ℃** (상단 입력란에서 변경 시 AI 즉시 연동)
     """)
     
     col_a1, col_a2 = st.columns(2)
@@ -727,7 +787,7 @@ elif st.session_state.process_step == 1:
             st.rerun()
 
 # =============================================================
-# STEP 2: A200 공정 (살균냉각 및 투입)
+# STEP 2: A200 공정 (살균냉각 및 투입) - 실내온도 기반 AI 제어점 1
 # =============================================================
 elif st.session_state.process_step == 2:
     st.subheader(f"[Step 2: A200] {st.session_state.product_name} 살균 및 냉각 투입 단계 (배치: {st.session_state.batch_id})")
@@ -742,7 +802,7 @@ elif st.session_state.process_step == 2:
         st.caption("SCADA 태그: P101TC02.SP (A200 구역)")
     with c_rec2:
         st.info(f"""
-        * **외적 환경 분석:** 실시간 외기 {curr_t}℃ / 실내 {st.session_state.indoor_t}℃ (유효환경 {c_res['t_eff_early']}℃)
+        * **환경 분석:** 실시간 외기 {curr_t}℃ / 발효실 실내 **{st.session_state.indoor_t}℃** (유효환경 {c_res['t_eff_early']}℃)
         * **배관 이송 열손실:** 35m SUS 배관 통과 중 **+{c_res['delta_t_pipe']}℃** 손실 보정 반영됨.
         * **작업 지침:** 살균기 냉각 제어반(P101TC02)을 **{c_res['rec_cooling']}℃**로 설정하여 발효조로 투입바람. (동절기 41℃ 이상 과열 금지)
         """)
@@ -776,7 +836,7 @@ elif st.session_state.process_step == 2:
             st.rerun()
 
 # =============================================================
-# STEP 3: A300 공정 (발효 및 재킷 보온)
+# STEP 3: A300 공정 (발효 및 재킷 보온) - 실내온도 기반 AI 제어점 2
 # =============================================================
 elif st.session_state.process_step == 3:
     st.subheader(f"[Step 3: A300] {st.session_state.product_name} 발효 및 재킷 보온 제어 (배치: {st.session_state.batch_id})")
