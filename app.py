@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Mobile-Optimized SCADA SOP & AI Temperature Controller v7.0
-• 모바일 화면 완벽 대응 반응형 CSS 탑재 (상단 카드 삐져나옴 및 겹침 원천 차단)
-• 실내온도 카드: 인라인 플렉스 레이아웃으로 버튼 이탈 완전 방지
+FermaAX™ Mobile-Optimized SCADA SOP & AI Temperature Controller v7.1
+• 상단 바(Fork, GitHub 아이콘) 완전 제거 및 상단 여백(Safe Padding) 확보로 상단 잘림 버그 완벽 해결
+• 실내온도 카드: 인라인 플렉스 레이아웃으로 버튼 이탈 방지
 • 상단 7단계 공정 바: 모바일 터치 스와이프(가로 스크롤) 지원으로 카드 찌그러짐 방지
 • 단계 전환 시 실내온도 재설정 모달 팝업 및 확정 잠금/수정 기능 유지
 • AI 4D 최적화 엔진 실시간 연동 및 구글 시트 영구 누적 기록 완비
@@ -58,12 +58,24 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# [모바일 완벽 대응 반응형 커스텀 CSS]
+# [상단 잘림 해결 및 모바일 완벽 대응 커스텀 CSS]
 st.markdown("""
 <style>
-    /* 기본 여백 및 글자 크기 */
+    /* 1. 상단 Streamlit 기본 메뉴/헤더(Fork, GitHub 아이콘 등) 완전 제거 */
+    header[data-testid="stHeader"] {
+        display: none !important;
+        height: 0px !important;
+    }
+    #MainMenu {
+        visibility: hidden !important;
+    }
+    footer {
+        visibility: hidden !important;
+    }
+
+    /* 2. 최상단 안전 마진(Safe Padding) 확보로 카드 잘림 원천 차단 */
     .block-container {
-        padding-top: 1rem !important;
+        padding-top: 1.8rem !important;
         padding-bottom: 2rem !important;
         padding-left: 0.8rem !important;
         padding-right: 0.8rem !important;
@@ -72,7 +84,7 @@ st.markdown("""
         font-size: 16px !important;
     }
     
-    /* 상단 실내온도 폼 카드 반응형 스타일 */
+    /* 3. 실내온도 폼 카드 반응형 스타일 */
     div[data-testid="stForm"] {
         border: 1.5px solid #38bdf8 !important;
         border-radius: 12px !important;
@@ -105,7 +117,7 @@ st.markdown("""
         margin-top: 2px !important;
     }
     
-    /* 입력 위젯 및 버튼 스타일 */
+    /* 4. 입력 위젯 및 버튼 폰트 */
     .stTextInput label, .stNumberInput label, .stSelectbox label {
         font-size: 1.1rem !important;
         font-weight: 700 !important;
@@ -373,7 +385,7 @@ if st.session_state.show_temp_popup and (1 <= cur_step <= 7):
         step_indoor_temp_modal(code_now, name_now)
 
 # -------------------------------------------------------------
-# 7. 상단 헤더 3대 카드 (모바일 핏 반응형 재설계)
+# 7. 상단 헤더 3대 카드 (상단 잘림 방지 핏)
 # -------------------------------------------------------------
 col_weather, col_indoor, col_clock = st.columns([1.0, 1.1, 1.2])
 
@@ -381,7 +393,7 @@ col_weather, col_indoor, col_clock = st.columns([1.0, 1.1, 1.2])
 with col_weather:
     st.markdown(
         f"""
-        <div style="text-align: center; padding: 8px 10px; background: #0f172a; border-radius: 12px; border: 1.5px solid #38bdf8; margin-bottom: 8px;">
+        <div style="text-align: center; padding: 10px; background: #0f172a; border-radius: 12px; border: 1.5px solid #38bdf8; margin-bottom: 8px;">
             <div style="font-size: 11px; color: #94a3b8; font-weight: bold;">부산 기장군 외기 ({weather_status})</div>
             <div style="font-size: 26px; font-weight: 900; color: #f43f5e; font-family: monospace; line-height: 1.2; margin: 2px 0;">{curr_t} ℃</div>
             <div style="font-size: 11px; color: #38bdf8; font-weight: 700;">최저 {min_t}℃ ~ 최고 {max_t}℃</div>
@@ -390,13 +402,13 @@ with col_weather:
         unsafe_allow_html=True
     )
 
-# [2. 실내온도 상태 및 인라인 입력 카드 (버튼 삐져나옴 방지)]
+# [2. 실내온도 상태 및 인라인 입력 카드]
 with col_indoor:
     curr_step_name_label = step_defs[cur_step - 1][1] if (1 <= cur_step <= 7) else "Step 0"
     if st.session_state.temp_locked:
         st.markdown(
             f"""
-            <div style="text-align: center; padding: 8px 10px; background: #0f172a; border-radius: 12px; border: 1.5px solid #10b981; margin-bottom: 4px;">
+            <div style="text-align: center; padding: 10px; background: #0f172a; border-radius: 12px; border: 1.5px solid #10b981; margin-bottom: 4px;">
                 <div style="font-size: 11px; color: #a7f3d0; font-weight: bold;">[{curr_step_name_label}] 실내온도 확정 고정</div>
                 <div style="font-size: 24px; font-weight: 900; color: #34d399; font-family: monospace; line-height: 1.2; margin: 2px 0;">{st.session_state.indoor_t} ℃</div>
             </div>
@@ -464,7 +476,7 @@ with col_clock:
             }}
             .clock-card {{
                 text-align: center;
-                padding: 8px 10px;
+                padding: 10px;
                 background: #0f172a;
                 border-radius: 12px;
                 border: 1.5px solid #38bdf8;
@@ -528,7 +540,7 @@ with col_clock:
 st.markdown("<div style='margin-top: 6px;'></div>", unsafe_allow_html=True)
 
 # -------------------------------------------------------------
-# 8. 상단 7단계 가로형 터치 스와이프 공정 바 (카드 찌그러짐 방지)
+# 8. 상단 7단계 가로형 터치 스와이프 공정 바
 # -------------------------------------------------------------
 steps_data = []
 for s_idx, s_code, s_label, s_tag in step_defs:
