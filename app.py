@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.1
-• 기상청 Open-Meteo API 통신 오류(User-Agent 헤더 차단 및 타임아웃) 완벽 해결
-• 우측 상단 대한민국 표준시(KST) 실시간 초단위 라이브 디지털 시계 & 총 경과시간 연동
-• 좌측 런 발효유 로고(75px) / 중앙 기장군 외기온도 센터링(75px) / 우측 시계(75px) 3단 정렬
-• 작업자 성명 기본값 '공장장' | 생산품목 '런 발효유' (수정 가능)
-• A400(시럽 배합) & A500(시럽 살균) 분리 및 상단 7단계 가로형 소요시간 카드 바 탑재
-• 오조작 방지용 [이전 단계로 되돌리기] 및 다차원 MQI 품질 로깅 체계 완비
+FermaAX™ Full-Process SCADA SOP & AI Temperature Controller v6.3
+• 앱 내 모든 그래픽/이모지 아이콘 제거 (순수 텍스트 인터페이스)
+• 현장 시인성 전역 대형 폰트(Big Font) CSS 유지
+• 우측 상단 대한민국 표준시(KST) 실시간 초단위 라이브 시계 및 총 경과시간 연동
+• 상단 7단계 소요시간 카드 바, A400/A500 독립 분리, 이전 단계 되돌리기 완비
 """
 import os
 import streamlit as st
@@ -49,16 +47,57 @@ def format_time_delta(seconds_total):
     else:
         return f"{int(seconds_total)}초"
 
-# 1. 반응형 페이지 설정
+# 1. 반응형 페이지 설정 (아이콘 제거)
 st.set_page_config(
     page_title="런 발효유 SCADA 공정 제어기",
-    page_icon="🥛",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# 2. SQLite 데이터베이스 초기화 (v6.1 신규 스키마 충돌 방지)
-DB_FILE = "ferma_scada_v61.db"
+# [글자 크기 대폭 확대를 위한 전역 커스텀 CSS]
+st.markdown("""
+<style>
+    /* 1. 기본 본문 및 전역 텍스트 확대 */
+    html, body, [class*="css"] {
+        font-size: 17px !important;
+    }
+    /* 2. 입력 폼 레이블 글자 확대 */
+    .stTextInput label, .stNumberInput label, .stSelectbox label, .stSlider label {
+        font-size: 1.15rem !important;
+        font-weight: 700 !important;
+        color: #0f172a !important;
+        margin-bottom: 4px !important;
+    }
+    /* 3. 입력 필드 내부 수치/텍스트 확대 */
+    .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {
+        font-size: 1.25rem !important;
+        font-weight: 700 !important;
+        padding: 0.5rem 0.75rem !important;
+    }
+    /* 4. 터치 버튼 글자 및 패딩 확대 */
+    .stButton button {
+        font-size: 1.25rem !important;
+        font-weight: 800 !important;
+        padding: 0.65rem 1.2rem !important;
+        border-radius: 8px !important;
+    }
+    /* 5. 헤딩 타이틀 계열 크기 보정 */
+    h1 { font-size: 2.2rem !important; }
+    h2 { font-size: 1.85rem !important; }
+    h3 { font-size: 1.55rem !important; }
+    h4 { font-size: 1.35rem !important; }
+    h5 { font-size: 1.2rem !important; }
+    p, li { font-size: 1.1rem !important; line-height: 1.5 !important; }
+    /* 6. 알림/인포 박스 텍스트 확대 */
+    .stAlert p {
+        font-size: 1.1rem !important;
+        line-height: 1.5 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# 2. SQLite 데이터베이스 초기화
+DB_FILE = "ferma_scada_v63.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -141,7 +180,7 @@ def save_final_mqi(batch_id, duration, acidity, ph, visc, syn, taste, mqi, memo)
     c = conn.cursor()
     now_str = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute('''
-        INSERT OR REPLACE INTO batch_mqi_final VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO batch_mqi_final VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (batch_id, now_str, duration, acidity, ph, visc, syn, taste, mqi, memo))
     c.execute("UPDATE batch_master SET status = 'COMPLETED' WHERE batch_id = ?", (batch_id,))
     conn.commit()
@@ -167,7 +206,7 @@ def get_all_completed_batches():
     conn.close()
     return df
 
-# 3. 부산 기장군 실시간 기상 데이터 수집 함수 (User-Agent 헤더 주입 및 최신 파라미터 적용)
+# 3. 부산 기장군 실시간 기상 데이터 수집 함수
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_gijang_weather():
     url = (
@@ -191,7 +230,7 @@ def fetch_gijang_weather():
             return curr_t, min_t, max_t, "기상청 정상 연동"
         else:
             return 24.5, 20.0, 29.0, f"기상 서버 지연 ({res.status_code})"
-    except Exception as e:
+    except Exception:
         return 24.5, 20.0, 29.0, "네트워크 지연 모드"
 
 # 4. 4D 동적 최적화 및 배관 열손실 연산 엔진
@@ -240,13 +279,13 @@ if "step_durations" not in st.session_state:
 if "step_entry_times" not in st.session_state:
     st.session_state.step_entry_times = {}
 
-# 6. 상단 헤더 3단 정렬: [좌측 런 이미지] | [중앙 기장군 외기온도] | [우측 KST 실시간 연속 시계]
+# 6. 상단 헤더 3단 정렬 (텍스트 전용)
 curr_t, min_t, max_t, weather_status = fetch_gijang_weather()
 kst_now = get_kst_now()
 
 col_logo, col_info, col_clock = st.columns([1.0, 2.0, 1.2])
 
-# [좌측 상단: 런 발효유 이미지 - 75px 고정]
+# [좌측 상단: 브랜드 텍스트 배지]
 with col_logo:
     local_img_path = None
     for candidate in ["run.png", "run_logo.png", "run_yogurt.png"]:
@@ -255,41 +294,40 @@ with col_logo:
             break
 
     if local_img_path:
-        st.image(local_img_path, height=75)
+        st.image(local_img_path, height=85)
     else:
         st.markdown(
             """
-            <div style="height: 75px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #ffffff 0%, #fff1f2 100%); border-radius: 10px; border: 2px solid #e11d48; box-shadow: 0 4px 6px rgba(225,29,72,0.1); padding: 0 16px;">
-                <div style="font-size: 30px; margin-right: 8px;">🥛</div>
-                <div style="line-height: 1.15;">
-                    <span style="font-size: 24px; font-weight: 900; color: #e11d48; letter-spacing: -0.5px;">RUN</span>
-                    <span style="font-size: 16px; font-weight: 800; color: #1e293b; margin-left: 4px;">런 발효유</span><br>
-                    <span style="font-size: 11px; color: #64748b; font-weight: 600;">스마트 발효공정 제어</span>
+            <div style="height: 85px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #ffffff 0%, #fff1f2 100%); border-radius: 12px; border: 2px solid #e11d48; box-shadow: 0 4px 6px rgba(225,29,72,0.1); padding: 0 16px;">
+                <div style="line-height: 1.15; text-align: center;">
+                    <span style="font-size: 26px; font-weight: 900; color: #e11d48; letter-spacing: -0.5px;">RUN</span>
+                    <span style="font-size: 18px; font-weight: 800; color: #1e293b; margin-left: 4px;">런 발효유</span><br>
+                    <span style="font-size: 13px; color: #64748b; font-weight: 600;">스마트 발효공정 제어</span>
                 </div>
             </div>
             """,
             unsafe_allow_html=True
         )
 
-# [중앙 상단: 기장군 실시간 외기온도 가운데 정렬 배치 - 75px 고정]
+# [중앙 상단: 기장군 실시간 외기온도]
 with col_info:
     st.markdown(
         f"""
-        <div style="height: 75px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: #f8fafc; border-radius: 10px; border: 1.5px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
-            <div style="font-size: 12px; color: #64748b; font-weight: 700; display: flex; align-items: center; gap: 4px;">
-                <span>📍 부산 기장군 실시간 외기</span>
-                <span style="color: #0284c7; font-size: 11px; font-weight: 600;">({weather_status})</span>
+        <div style="height: 85px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: #f8fafc; border-radius: 12px; border: 1.5px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
+            <div style="font-size: 14px; color: #64748b; font-weight: 800; display: flex; align-items: center; gap: 6px;">
+                <span>부산 기장군 실시간 외기</span>
+                <span style="color: #0284c7; font-size: 13px; font-weight: 700;">({weather_status})</span>
             </div>
-            <div style="font-size: 24px; font-weight: 900; color: #0f172a; margin: 1px 0;">
+            <div style="font-size: 28px; font-weight: 900; color: #0f172a; margin: 2px 0;">
                 <span style="color: #e11d48;">{curr_t}℃</span>
-                <span style="font-size: 14px; font-weight: 700; color: #475569; margin-left: 6px;">(최저 {min_t}℃ ~ 최고 {max_t}℃)</span>
+                <span style="font-size: 16px; font-weight: 800; color: #475569; margin-left: 8px;">(최저 {min_t}℃ ~ 최고 {max_t}℃)</span>
             </div>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-# [우측 상단: 자바스크립트 기반 실시간 초단위 라이브 시계 - 75px 고정]
+# [우측 상단: 자바스크립트 기반 실시간 초단위 라이브 시계]
 with col_clock:
     start_epoch = 0
     if st.session_state.process_step > 0 and st.session_state.batch_start_dt:
@@ -309,11 +347,11 @@ with col_clock:
                 font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
             }}
             .clock-card {{
-                height: 75px;
+                height: 85px;
                 text-align: right;
-                padding: 6px 12px;
+                padding: 8px 14px;
                 background: #0f172a;
-                border-radius: 10px;
+                border-radius: 12px;
                 border: 1.5px solid #38bdf8;
                 box-shadow: 0 4px 6px rgba(0,0,0,0.1);
                 display: flex;
@@ -322,13 +360,13 @@ with col_clock:
                 box-sizing: border-box;
             }}
             .clock-title {{
-                font-size: 11px;
+                font-size: 12px;
                 color: #94a3b8;
                 font-weight: bold;
                 letter-spacing: -0.2px;
             }}
             .clock-time {{
-                font-size: 20px;
+                font-size: 23px;
                 font-weight: 900;
                 color: #38bdf8;
                 font-family: monospace;
@@ -337,15 +375,15 @@ with col_clock:
                 margin-top: 1px;
             }}
             .ampm {{
-                font-size: 12px;
+                font-size: 13px;
                 color: #a5f3fc;
-                margin-right: 3px;
+                margin-right: 4px;
                 font-family: sans-serif;
             }}
             .elapsed {{
-                font-size: 11px;
+                font-size: 13px;
                 color: #4ade80;
-                font-weight: bold;
+                font-weight: 800;
                 margin-top: 2px;
                 white-space: nowrap;
             }}
@@ -382,7 +420,7 @@ with col_clock:
                     if (h > 0) dur = `${{h}}시간 ${{m}}분 ${{s}}초`;
                     else if (m > 0) dur = `${{m}}분 ${{s}}초`;
                     else dur = `${{s}}초`;
-                    document.getElementById('live-kst-elapsed').innerHTML = `⏱️ 총 경과: ${{dur}}`;
+                    document.getElementById('live-kst-elapsed').innerHTML = `총 경과: ${{dur}}`;
                 }} else {{
                     document.getElementById('live-kst-elapsed').innerHTML = '';
                 }}
@@ -393,12 +431,12 @@ with col_clock:
     </body>
     </html>
     """
-    components.html(clock_component_html, height=75)
+    components.html(clock_component_html, height=85)
 
-st.markdown("<div style='margin-top: 8px;'></div>", unsafe_allow_html=True)
+st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
 
 # -------------------------------------------------------------
-# 상단 7단계 가로형 소요시간 카드 바 (A100 ➔ A200 ➔ A300 ➔ A400 ➔ A500 ➔ A600 ➔ A700)
+# 상단 7단계 가로형 소요시간 카드 바
 # -------------------------------------------------------------
 step_cols = st.columns(7)
 step_defs = [
@@ -424,7 +462,7 @@ for idx, (s_idx, s_code, s_label, s_tag) in enumerate(step_defs):
             bg_color = "#f0fdf4"
             border_color = "#86efac"
             dur_display = st.session_state.step_durations.get(f"Step_{s_idx}", "완료")
-            badge = "✓ 완료"
+            badge = "완료"
         elif st.session_state.process_step == s_idx:
             status_color = "#0284c7"
             bg_color = "#f0f9ff"
@@ -432,7 +470,7 @@ for idx, (s_idx, s_code, s_label, s_tag) in enumerate(step_defs):
             s_start = st.session_state.step_entry_times.get(f"Step_{s_idx}", kst_now)
             elapsed_sec = (kst_now - s_start).total_seconds()
             dur_display = format_time_delta(elapsed_sec)
-            badge = "● 진행 중"
+            badge = "진행 중"
         else:
             status_color = "#94a3b8"
             bg_color = "#f8fafc"
@@ -442,10 +480,10 @@ for idx, (s_idx, s_code, s_label, s_tag) in enumerate(step_defs):
 
         st.markdown(
             f"""
-            <div style="padding: 8px; border-radius: 8px; background: {bg_color}; border: 1.5px solid {border_color}; text-align: center;">
-                <div style="font-size: 10px; font-weight: bold; color: {status_color};">{badge} | {s_code}</div>
-                <div style="font-size: 14px; font-weight: 900; color: #0f172a; margin: 2px 0;">{s_code} {dur_display}</div>
-                <div style="font-size: 10px; color: #64748b;">{s_label}</div>
+            <div style="padding: 10px; border-radius: 10px; background: {bg_color}; border: 1.5px solid {border_color}; text-align: center;">
+                <div style="font-size: 12px; font-weight: bold; color: {status_color};">{badge} | {s_code}</div>
+                <div style="font-size: 16px; font-weight: 900; color: #0f172a; margin: 3px 0;">{s_code} {dur_display}</div>
+                <div style="font-size: 12px; color: #64748b; font-weight: 600;">{s_label}</div>
             </div>
             """,
             unsafe_allow_html=True
@@ -457,7 +495,7 @@ st.divider()
 # STEP 0: 배치 착수 등록 (작업자 디폴트: 공장장)
 # =============================================================
 if st.session_state.process_step == 0:
-    st.subheader("📋 [Step 0] 런 발효유 생산 배치 착수 등록")
+    st.subheader("[Step 0] 런 발효유 생산 배치 착수 등록")
     
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -474,7 +512,7 @@ if st.session_state.process_step == 0:
         st.info(f"생성될 배치 ID: **{batch_id_gen}**")
 
     st.divider()
-    if st.button("🚀 이 설정으로 [배치 작업 시작 (A100 착수)]", type="primary", use_container_width=True):
+    if st.button("이 설정으로 [배치 작업 시작 (A100 착수)]", type="primary", use_container_width=True):
         if not worker_name.strip():
             st.error("작업자 성명을 입력바람.")
         elif not product_name_input.strip():
@@ -508,10 +546,10 @@ if st.session_state.process_step == 0:
 # STEP 1: A100 공정 (Base Mix 배합 및 준비)
 # =============================================================
 elif st.session_state.process_step == 1:
-    st.subheader(f"📍 [Step 1: A100] {st.session_state.product_name} Base Mix 배합 단계 (배치: {st.session_state.batch_id})")
+    st.subheader(f"[Step 1: A100] {st.session_state.product_name} Base Mix 배합 단계 (배치: {st.session_state.batch_id})")
     
     st.markdown(f"""
-    * **담당 구역:** 101~104호 베이스 배합탱크 및 분말 믹서 (`MX101`, 45.0 Hz)[cite: 3]
+    * **담당 구역:** 101~104호 베이스 배합탱크 및 분말 믹서 (MX101, 45.0 Hz)[cite: 3]
     * **주요 작업:** **{st.session_state.product_name}** 원유 및 배합원료 계량 투입, 배합 탱크 교반 가동, 살균 라인 이송 밸브 점검[cite: 3]
     * **제어 지침:** 원유 초기 온도 확인 후 A200 살균기 이송 준비 완료 확인[cite: 3]
     """)
@@ -525,14 +563,14 @@ elif st.session_state.process_step == 1:
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("◀ 작업 취소 (Step 0으로 복귀)", use_container_width=True):
+        if st.button("작업 취소 (Step 0으로 복귀)", use_container_width=True):
             st.session_state.process_step = 0
             st.session_state.batch_start_dt = None
             st.session_state.step_entry_times = {}
             st.session_state.step_durations = {}
             st.rerun()
     with c2:
-        if st.button("A100 완료 ➔ 다음 단계 [A200 살균/냉각] 이동", type="primary", use_container_width=True):
+        if st.button("A100 완료 [다음 단계 A200 살균/냉각 이동]", type="primary", use_container_width=True):
             s1_start = st.session_state.step_entry_times.get("Step_1", kst_now)
             step_sec = (kst_now - s1_start).total_seconds()
             step_dur_str = format_time_delta(step_sec)
@@ -545,42 +583,42 @@ elif st.session_state.process_step == 1:
             st.rerun()
 
 # =============================================================
-# STEP 2: A200 공정 (살균냉각 및 투입) - ★ AI 추천온도 제어점 1
+# STEP 2: A200 공정 (살균냉각 및 투입) - AI 추천온도 제어점 1
 # =============================================================
 elif st.session_state.process_step == 2:
-    st.subheader(f"📍 [Step 2: A200] {st.session_state.product_name} 살균 및 냉각 투입 단계 (배치: {st.session_state.batch_id})")
-    st.warning("⚠️ **[핵심 제어점 1: 살균냉각온도]** AI 추천온도를 확인하고 HMI 제어반에 설정한 뒤 확인 값을 입력바람.")
+    st.subheader(f"[Step 2: A200] {st.session_state.product_name} 살균 및 냉각 투입 단계 (배치: {st.session_state.batch_id})")
+    st.warning("[핵심 제어점 1: 살균냉각온도] AI 추천온도를 확인하고 HMI 제어반에 설정한 뒤 확인 값을 입력바람.")
     
     c_res = st.session_state.calc_res
     
     c_rec1, c_rec2 = st.columns([1, 2])
     with c_rec1:
-        st.markdown("#### 🎯 AI 추천 살균냉각온도")
-        st.markdown(f"<h1 style='color:#1f77b4; font-size:48px;'>{c_res['rec_cooling']} ℃</h1>", unsafe_allow_html=True)
-        st.caption("SCADA 태그: **P101TC02.SP** (A200 구역)")
+        st.markdown("#### AI 추천 살균냉각온도")
+        st.markdown(f"<h1 style='color:#1f77b4; font-size:54px; font-weight:900;'>{c_res['rec_cooling']} ℃</h1>", unsafe_allow_html=True)
+        st.caption("SCADA 태그: P101TC02.SP (A200 구역)")
     with c_rec2:
         st.info(f"""
         * **외적 환경 분석:** 실시간 외기 {curr_t}℃ / 실내 {st.session_state.indoor_t}℃ (유효환경 {c_res['t_eff_early']}℃)
         * **배관 이송 열손실:** 35m SUS 배관 통과 중 **+{c_res['delta_t_pipe']}℃** 손실 보정 반영됨.
-        * **작업 지침:** 살균기 냉각 제어반(`P101TC02`)을 **{c_res['rec_cooling']}℃**로 설정하여 발효조로 투입바람. (동절기 41℃ 이상 과열 금지)
+        * **작업 지침:** 살균기 냉각 제어반(P101TC02)을 **{c_res['rec_cooling']}℃**로 설정하여 발효조로 투입바람. (동절기 41℃ 이상 과열 금지)
         """)
 
     st.markdown("---")
-    st.markdown("#### 📝 작업자 HMI 설정 및 실측 확인 입력")
+    st.markdown("#### 작업자 HMI 설정 및 실측 확인 입력")
     f1, f2 = st.columns(2)
     with f1:
-        op_set_cool = st.number_input("HMI 실제 설정값 (`P101TC02.SP`, ℃)", 35.0, 42.0, float(c_res['rec_cooling']), 0.1)
+        op_set_cool = st.number_input("HMI 실제 설정값 (P101TC02.SP, ℃)", 35.0, 42.0, float(c_res['rec_cooling']), 0.1)
     with f2:
-        act_meas_cool = st.number_input("살균기 토출 실측 액온 (`P101TT02`, ℃)", 35.0, 42.0, float(c_res['rec_cooling']), 0.1)
+        act_meas_cool = st.number_input("살균기 토출 실측 액온 (P101TT02, ℃)", 35.0, 42.0, float(c_res['rec_cooling']), 0.1)
 
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("◀ 이전 단계로 되돌리기 (A100 복귀 / 잘못 누름 취소)", use_container_width=True):
+        if st.button("이전 단계로 되돌리기 (A100 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 1
             st.rerun()
     with c2:
-        if st.button("💾 A200 확인 기록 ➔ [A300 발효] 이동", type="primary", use_container_width=True):
+        if st.button("A200 확인 기록 [A300 발효 이동]", type="primary", use_container_width=True):
             s2_start = st.session_state.step_entry_times.get("Step_2", kst_now)
             step_sec = (kst_now - s2_start).total_seconds()
             step_dur_str = format_time_delta(step_sec)
@@ -594,26 +632,26 @@ elif st.session_state.process_step == 2:
             st.rerun()
 
 # =============================================================
-# STEP 3: A300 공정 (발효 및 재킷 보온) - ★ AI 추천온도 제어점 2
+# STEP 3: A300 공정 (발효 및 재킷 보온) - AI 추천온도 제어점 2
 # =============================================================
 elif st.session_state.process_step == 3:
-    st.subheader(f"📍 [Step 3: A300] {st.session_state.product_name} 발효 및 재킷 보온 제어 (배치: {st.session_state.batch_id})")
-    st.warning("⚠️ **[핵심 제어점 2: 재킷 핫워터 & 발효조 TT]** 중후반 방열 손실을 방지하기 위한 AI 추천값을 HMI에 입력바람.")
+    st.subheader(f"[Step 3: A300] {st.session_state.product_name} 발효 및 재킷 보온 제어 (배치: {st.session_state.batch_id})")
+    st.warning("[핵심 제어점 2: 재킷 핫워터 & 발효조 TT] 중후반 방열 손실을 방지하기 위한 AI 추천값을 HMI에 입력바람.")
     
     c_res = st.session_state.calc_res
     
     c_hw1, c_hw2 = st.columns(2)
     with c_hw1:
-        st.markdown("#### 🔥 AI 추천 핫워터 순환온도")
-        st.markdown(f"<h1 style='color:#2ca02c; font-size:42px;'>{c_res['rec_hotwater']} ℃</h1>", unsafe_allow_html=True)
-        st.caption("SCADA 태그: **PHE301WCV01** (재킷 온수 순환밸브)")
+        st.markdown("#### AI 추천 핫워터 순환온도")
+        st.markdown(f"<h1 style='color:#2ca02c; font-size:48px; font-weight:900;'>{c_res['rec_hotwater']} ℃</h1>", unsafe_allow_html=True)
+        st.caption("SCADA 태그: PHE301WCV01 (재킷 온수 순환밸브)")
     with c_hw2:
-        st.markdown("#### 🏷️ AI 추천 발효조 목표 품온 (TT)")
-        st.markdown(f"<h1 style='color:#ff7f0e; font-size:42px;'>{c_res['rec_tank_tt']} ℃</h1>", unsafe_allow_html=True)
+        st.markdown("#### AI 추천 발효조 목표 품온 (TT)")
+        st.markdown(f"<h1 style='color:#ff7f0e; font-size:48px; font-weight:900;'>{c_res['rec_tank_tt']} ℃</h1>", unsafe_allow_html=True)
         st.caption("발효조 내부 유지 목표 품온")
 
     st.markdown("---")
-    st.markdown("#### ⏱️ 5시간(300분) 경과 시점 골든 액온 점검")
+    st.markdown("#### 5시간(300분) 경과 시점 골든 액온 점검")
     h1, h2, h3 = st.columns(3)
     with h1:
         op_set_hw = st.number_input("HMI 핫워터 설정값 (℃)", 35.0, 42.0, float(c_res['rec_hotwater']), 0.1)
@@ -625,11 +663,11 @@ elif st.session_state.process_step == 3:
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("◀ 이전 단계로 되돌리기 (A200 복귀 / 잘못 누름 취소)", use_container_width=True):
+        if st.button("이전 단계로 되돌리기 (A200 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 2
             st.rerun()
     with c2:
-        if st.button("💾 5H 점검 기록 ➔ [A400 시럽 배합] 이동", type="primary", use_container_width=True):
+        if st.button("5H 점검 기록 [A400 시럽 배합 이동]", type="primary", use_container_width=True):
             s3_start = st.session_state.step_entry_times.get("Step_3", kst_now)
             step_sec = (kst_now - s3_start).total_seconds()
             step_dur_str = format_time_delta(step_sec)
@@ -646,13 +684,13 @@ elif st.session_state.process_step == 3:
             st.rerun()
 
 # =============================================================
-# STEP 4: A400 공정 (시럽 배합 및 용해) - ★ 독립 분리
+# STEP 4: A400 공정 (시럽 배합 및 용해)
 # =============================================================
 elif st.session_state.process_step == 4:
-    st.subheader(f"📍 [Step 4: A400] {st.session_state.product_name} 시럽 배합 및 용해 단계 (배치: {st.session_state.batch_id})")
+    st.subheader(f"[Step 4: A400] {st.session_state.product_name} 시럽 배합 및 용해 단계 (배치: {st.session_state.batch_id})")
     
     st.markdown(f"""
-    * **담당 구역:** 401~402호 시럽 배합탱크 (`T401`, `T402`) 및 파우더 믹서 펌프 (`P401`, `P402` 45.0 Hz)[cite: 3]
+    * **담당 구역:** 401~402호 시럽 배합탱크 (T401, T402) 및 파우더 믹서 펌프 (P401, P402 45.0 Hz)[cite: 3]
     * **주요 작업:** **{st.session_state.product_name}** 전용 당류/과일 원료 투입, 고속 용해 교반, 배합액 균질성 및 당도(Brix) 점검[cite: 3]
     * **제어 지침:** 시럽 완전 용해 확인 후 A500 시럽 전용 살균기로 이송 개시[cite: 3]
     """)
@@ -666,11 +704,11 @@ elif st.session_state.process_step == 4:
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("◀ 이전 단계로 되돌리기 (A300 복귀 / 잘못 누름 취소)", use_container_width=True):
+        if st.button("이전 단계로 되돌리기 (A300 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 3
             st.rerun()
     with c2:
-        if st.button("A400 완료 ➔ 다음 단계 [A500 시럽 살균] 이동", type="primary", use_container_width=True):
+        if st.button("A400 완료 [다음 단계 A500 시럽 살균 이동]", type="primary", use_container_width=True):
             s4_start = st.session_state.step_entry_times.get("Step_4", kst_now)
             step_sec = (kst_now - s4_start).total_seconds()
             step_dur_str = format_time_delta(step_sec)
@@ -683,31 +721,31 @@ elif st.session_state.process_step == 4:
             st.rerun()
 
 # =============================================================
-# STEP 5: A500 공정 (시럽 살균 및 냉각) - ★ 독립 분리
+# STEP 5: A500 공정 (시럽 살균 및 냉각)
 # =============================================================
 elif st.session_state.process_step == 5:
-    st.subheader(f"📍 [Step 5: A500] {st.session_state.product_name} 시럽 전용 살균 및 냉각 단계 (배치: {st.session_state.batch_id})")
+    st.subheader(f"[Step 5: A500] {st.session_state.product_name} 시럽 전용 살균 및 냉각 단계 (배치: {st.session_state.batch_id})")
     
     st.markdown(f"""
-    * **담당 구역:** 시럽 전용 판형 살균기 (`P201TC02`, `P2X2TC01`) 및 전도도 센서 (`P2B1CT02`)[cite: 3]
-    * **주요 작업:** 85℃ 살균 유지 확인, 살균 후 급속 냉각(`P2X4TT71`, 목표 24.7℃), 이송 배관 세니타이제이션 점검[cite: 3]
+    * **담당 구역:** 시럽 전용 판형 살균기 (P201TC02, P2X2TC01) 및 전도도 센서 (P2B1CT02)[cite: 3]
+    * **주요 작업:** 85℃ 살균 유지 확인, 살균 후 급속 냉각(P2X4TT71, 목표 24.7℃), 이송 배관 세니타이제이션 점검[cite: 3]
     * **제어 지침:** 냉각 완료 시럽을 A600 블렌딩 라인으로 공급 대기[cite: 3]
     """)
     
     col_p1, col_p2 = st.columns(2)
     with col_p1:
-        syrup_pasteur_t = st.number_input("시럽 살균 유지온도 (`P201TT02`, ℃)", 75.0, 95.0, 85.0, 0.5)
+        syrup_pasteur_t = st.number_input("시럽 살균 유지온도 (P201TT02, ℃)", 75.0, 95.0, 85.0, 0.5)
     with col_p2:
-        syrup_cool_t = st.number_input("시럽 살균 후 최종 냉각온도 (`P2X4TT71`, ℃)", 15.0, 30.0, 24.7, 0.1)
+        syrup_cool_t = st.number_input("시럽 살균 후 최종 냉각온도 (P2X4TT71, ℃)", 15.0, 30.0, 24.7, 0.1)
 
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("◀ 이전 단계로 되돌리기 (A400 복귀 / 잘못 누름 취소)", use_container_width=True):
+        if st.button("이전 단계로 되돌리기 (A400 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 4
             st.rerun()
     with c2:
-        if st.button("A500 완료 ➔ 다음 단계 [A600 블렌딩/칠링] 이동", type="primary", use_container_width=True):
+        if st.button("A500 완료 [다음 단계 A600 블렌딩/칠링 이동]", type="primary", use_container_width=True):
             s5_start = st.session_state.step_entry_times.get("Step_5", kst_now)
             step_sec = (kst_now - s5_start).total_seconds()
             step_dur_str = format_time_delta(step_sec)
@@ -720,47 +758,47 @@ elif st.session_state.process_step == 5:
             st.rerun()
 
 # =============================================================
-# STEP 6: A600 공정 (블렌딩 및 선행 급속 냉각) - ★ AI 추천온도 제어점 3
+# STEP 6: A600 공정 (블렌딩 및 선행 급속 냉각) - AI 추천온도 제어점 3
 # =============================================================
 elif st.session_state.process_step == 6:
-    st.subheader(f"📍 [Step 6: A600] {st.session_state.product_name} 블렌딩 및 PHE301 급속 냉각 (배치: {st.session_state.batch_id})")
-    st.warning("⚠️ **[핵심 제어점 3: 선행 냉각 트리거]** 후산도(+0.035)를 고려한 AI 선행 냉각 시점을 준수바람.")
+    st.subheader(f"[Step 6: A600] {st.session_state.product_name} 블렌딩 및 PHE301 급속 냉각 (배치: {st.session_state.batch_id})")
+    st.warning("[핵심 제어점 3: 선행 냉각 트리거] 후산도(+0.035)를 고려한 AI 선행 냉각 시점을 준수바람.")
     
     acid_5h_saved = getattr(st.session_state, 'acid_5h', 0.910)
     rem_acid = 0.930 - acid_5h_saved
     
     if rem_acid <= 0:
         trig_min = 300
-        trig_msg = "🚨 즉시 PHE301 냉각 밸브를 OPEN하여 급속 칠링을 시작바람! (선행산도 0.930 도달)"
+        trig_msg = "즉시 PHE301 냉각 밸브를 OPEN하여 급속 칠링을 시작바람! (선행산도 0.930 도달)"
     else:
         add_min = int(rem_acid / 0.0015)
         trig_min = 300 + add_min
-        trig_msg = f"⏱️ 접종 후 **{trig_min}분 시점 (앞으로 약 {add_min}분 뒤)**에 PHE301 냉각 밸브를 개방바람."
+        trig_msg = f"접종 후 {trig_min}분 시점 (앞으로 약 {add_min}분 뒤)에 PHE301 냉각 밸브를 개방바람."
 
     c_c1, c_c2 = st.columns(2)
     with c_c1:
-        st.markdown("#### ❄️ AI 냉각 개시 선행 산도")
-        st.markdown("<h1 style='color:#0284c7; font-size:40px;'>산도 0.925 ~ 0.930</h1>", unsafe_allow_html=True)
-        st.caption("PHE301 통과 토출 목표온도: **7.3 ℃**")
+        st.markdown("#### AI 냉각 개시 선행 산도")
+        st.markdown("<h1 style='color:#0284c7; font-size:46px; font-weight:900;'>산도 0.925 ~ 0.930</h1>", unsafe_allow_html=True)
+        st.caption("PHE301 통과 토출 목표온도: 7.3 ℃")
     with c_c2:
         st.info(f"**[냉각 카운트다운]**\n\n{trig_msg}")
 
     st.markdown("---")
-    st.markdown("#### 📝 PHE301 냉각 가동 및 실측 입력")
+    st.markdown("#### PHE301 냉각 가동 및 실측 입력")
     cl1, cl2 = st.columns(2)
     with cl1:
         act_dur_min = st.number_input("실제 냉각 개시 분(Time)", 300, 420, int(trig_min), 1)
     with cl2:
-        phe_out_t = st.number_input("PHE301 토출 냉각온도 (`PHE301STT02`, ℃)", 4.0, 15.0, 7.3, 0.1)
+        phe_out_t = st.number_input("PHE301 토출 냉각온도 (PHE301STT02, ℃)", 4.0, 15.0, 7.3, 0.1)
 
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("◀ 이전 단계로 되돌리기 (A500 복귀 / 잘못 누름 취소)", use_container_width=True):
+        if st.button("이전 단계로 되돌리기 (A500 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 5
             st.rerun()
     with c2:
-        if st.button("💾 A600 냉각 확인 ➔ [A700 충전/MQI QC] 이동", type="primary", use_container_width=True):
+        if st.button("A600 냉각 확인 [A700 충전/MQI QC 이동]", type="primary", use_container_width=True):
             s6_start = st.session_state.step_entry_times.get("Step_6", kst_now)
             step_sec = (kst_now - s6_start).total_seconds()
             step_dur_str = format_time_delta(step_sec)
@@ -777,8 +815,8 @@ elif st.session_state.process_step == 6:
 # STEP 7: A700 공정 (서지탱크/충전 & 다차원 MQI 품질 검증)
 # =============================================================
 elif st.session_state.process_step == 7:
-    st.subheader(f"📍 [Step 7: A700] {st.session_state.product_name} 서지탱크 충전 & 다차원 품질검증 (배치: {st.session_state.batch_id})")
-    st.info(f"💡 {st.session_state.product_name} 완제품의 이화학(산도·pH), 물성(점도·유청분리), 관능(맛) 점수를 종합 평가하여 DB에 영구 기록함.")
+    st.subheader(f"[Step 7: A700] {st.session_state.product_name} 서지탱크 충전 & 다차원 품질검증 (배치: {st.session_state.batch_id})")
+    st.info(f"{st.session_state.product_name} 완제품의 이화학(산도·pH), 물성(점도·유청분리), 관능(맛) 점수를 종합 평가하여 DB에 영구 기록함.")
     
     st.markdown("##### 1. 이화학 지표 (Chemical)")
     q1, q2, q3 = st.columns(3)
@@ -808,16 +846,16 @@ elif st.session_state.process_step == 7:
     score_taste = (f_taste / 5.0) * 30.0
     mqi_total = round(min(100.0, max(0.0, score_chem + score_tex + score_taste)), 1)
 
-    st.markdown(f"### 🏆 {st.session_state.product_name} 종합 품질점수 (MQI Score): **`{mqi_total} / 100 점`**")
+    st.markdown(f"### {st.session_state.product_name} 종합 품질점수 (MQI Score): **`{mqi_total} / 100 점`**")
 
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("◀ 이전 단계로 되돌리기 (A600 복귀 / 잘못 누름 취소)", use_container_width=True):
+        if st.button("이전 단계로 되돌리기 (A600 복귀 / 잘못 누름 취소)", use_container_width=True):
             st.session_state.process_step = 6
             st.rerun()
     with c2:
-        if st.button("💾 전체 공정 최종 종결 및 DB 영구 저장", type="primary", use_container_width=True):
+        if st.button("전체 공정 최종 종결 및 DB 영구 저장", type="primary", use_container_width=True):
             s7_start = st.session_state.step_entry_times.get("Step_7", kst_now)
             step_sec = (kst_now - s7_start).total_seconds()
             step_dur_str = format_time_delta(step_sec)
@@ -835,9 +873,9 @@ elif st.session_state.process_step == 7:
 # STEP 8: 공정 완료 리포트 및 이력 조회
 # =============================================================
 elif st.session_state.process_step == 8:
-    st.success(f"🎉 [{st.session_state.product_name}] 배치 [{st.session_state.batch_id}] 공정이 성공적으로 종결되었으며 모든 단계별 온도 및 소요시간 이력이 기록되었음!")
+    st.success(f"[{st.session_state.product_name}] 배치 [{st.session_state.batch_id}] 공정이 성공적으로 종결되었으며 모든 단계별 온도 및 소요시간 이력이 기록되었음.")
     
-    tab_r1, tab_r2 = st.tabs(["📊 이번 배치 공정 단계별 온도 및 소요시간 이력", "📋 누적 완료 배치 관리"])
+    tab_r1, tab_r2 = st.tabs(["이번 배치 공정 단계별 온도 및 소요시간 이력", "누적 완료 배치 관리"])
     
     with tab_r1:
         cur_logs = get_step_logs(st.session_state.batch_id)
@@ -849,7 +887,7 @@ elif st.session_state.process_step == 8:
         if not all_df.empty:
             csv_export = all_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
-                label="📥 누적 MQI 품질 이력 CSV 다운로드",
+                label="누적 MQI 품질 이력 CSV 다운로드",
                 data=csv_export,
                 file_name=f"FermaAX_MQI_{date.today().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
@@ -857,7 +895,7 @@ elif st.session_state.process_step == 8:
             )
 
     st.divider()
-    if st.button("🔄 새로운 배치 작업 시작하기", type="primary", use_container_width=True):
+    if st.button("새로운 배치 작업 시작하기", type="primary", use_container_width=True):
         st.session_state.process_step = 0
         st.session_state.batch_id = ""
         st.session_state.batch_start_dt = None
