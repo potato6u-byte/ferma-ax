@@ -20,7 +20,7 @@ from datetime import datetime, date, timedelta, timezone
 # =============================================================
 # 구글 스프레드시트 웹 앱 URL 설정
 # =============================================================
-GSHEET_WEBHOOK_URL = "여기에_복사한_웹앱_URL을_붙여넣으세요"
+GSHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzMcyBZL5mhYVfP5ShDhixvlm50tqvsoDu99VmrFbGivDegWjiFRCTZ7r4Eqam7mYga/exec"
 
 # 0. 대한민국 표준시(KST) 타임존 및 시각 함수
 try:
