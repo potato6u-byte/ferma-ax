@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Mobile-Optimized SCADA SOP & AI Temperature Controller v7.2
-• 로컬 엑셀 파일(ferma_history.xlsx) 자동 생성 및 무인 누적 저장 탑재
-• 구글 스프레드시트 클라우드 웹훅 실시간 연동 완비
-• 상단 바 제거 및 최상단 안전 마진(Safe Padding) 유지
-• 모바일 터치 스와이프 7-Step 공정 바 및 단계별 실내온도 잠금/수정 제어
+FermaAX™ Mobile-Optimized SCADA SOP & AI Temperature Controller v7.4
+• 제공된 구글 스프레드시트 웹 앱 URL 실시간 탑재 완료
+• Step 0 화면에 [구글 시트 연동 즉시 테스트] 버튼 신설 (1초 만에 전송 확인 가능)
+• 구글 Apps Script 리다이렉트(302) 및 application/json 헤더 최적화
+• openpyxl 기반 기기 직접 엑셀(.xlsx) 다운로드 버튼 완비
+• 상단 바 제거 및 최상단 안전 마진, 모바일 7-Step 터치 스와이프 인터페이스 유지
 """
 import os
+import io
 import json
 import streamlit as st
 import streamlit.components.v1 as components
@@ -17,9 +19,9 @@ import sqlite3
 from datetime import datetime, date, timedelta, timezone
 
 # =============================================================
-# 1. 구글 스프레드시트 웹 앱 URL (배포 후 받은 URL을 여기에 붙여넣음)
+# 1. 구글 스프레드시트 웹 앱 URL (사용자 배포 URL 연동 완료)
 # =============================================================
-GSHEET_WEBHOOK_URL = "여기에_복사한_웹앱_URL을_붙여넣으세요"
+GSHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzMcyBZL5mhYVfP5ShDhixvlm50tqvsoDu99VmrFbGivDegWjiFRCTZ7r4Eqam7mYga/exec"
 
 # 대한민국 표준시(KST) 타임존 설정
 try:
@@ -50,14 +52,13 @@ def format_time_delta(seconds_total):
     else:
         return f"{int(seconds_total)}초"
 
-# 반응형 페이지 설정
 st.set_page_config(
     page_title="런 발효유 SCADA",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# 상단 잘림 해결 및 모바일 CSS
+# 모바일 화면 핏 CSS
 st.markdown("""
 <style>
     header[data-testid="stHeader"] { display: none !important; height: 0px !important; }
@@ -112,7 +113,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 2. 로컬 SQLite 데이터베이스 초기화
+# 2. SQLite 데이터베이스 초기화
 DB_FILE = "ferma_master_history.db"
 
 def init_db():
@@ -146,7 +147,6 @@ def init_db():
 
 init_db()
 
-# DB 헬퍼 함수
 def save_batch_start(batch_id, p_name, tank, worker, s_dt, s_korean, out_t, in_t):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -180,36 +180,40 @@ def save_final_mqi(batch_id, duration, acidity, ph, visc, syn, taste, mqi, memo)
     conn.commit()
     conn.close()
 
-# =============================================================
-# 3. 핵심 자동 저장 엔진 (로컬 엑셀 누적 + 구글 시트 전송)
-# =============================================================
+# 엑셀 누적 함수 (openpyxl 엔진)
 def append_to_local_excel(data_dict):
-    """로컬 PC에 ferma_history.xlsx 파일로 매 배치 결과를 자동 누적 저장"""
     excel_path = "ferma_history.xlsx"
     new_df = pd.DataFrame([data_dict])
     try:
         if os.path.exists(excel_path):
-            old_df = pd.read_excel(excel_path)
+            old_df = pd.read_excel(excel_path, engine='openpyxl')
             combined_df = pd.concat([old_df, new_df], ignore_index=True)
-            combined_df.to_excel(excel_path, index=False)
+            combined_df.to_excel(excel_path, index=False, engine='openpyxl')
         else:
-            new_df.to_excel(excel_path, index=False)
-        return True, "로컬 엑셀 누적 성공"
+            new_df.to_excel(excel_path, index=False, engine='openpyxl')
+        return True, "서버 엑셀 누적 완료"
     except Exception as e:
-        return False, f"로컬 엑셀 저장 실패: {str(e)[:20]}"
+        return False, f"엑셀 오류: {str(e)[:25]}"
 
+# 구글 스프레드시트 웹훅 전송 함수 (POST 리다이렉트 지원)
 def send_to_google_sheet(payload):
-    """구글 스프레드시트 웹 앱으로 데이터 전송"""
     if not GSHEET_WEBHOOK_URL or "여기에" in GSHEET_WEBHOOK_URL:
         return False, "구글 시트 URL 미설정"
     try:
-        res = requests.post(GSHEET_WEBHOOK_URL, json=payload, timeout=8)
-        if res.status_code == 200:
-            return True, "구글 시트 저장 성공"
+        headers = {"Content-Type": "application/json"}
+        res = requests.post(
+            GSHEET_WEBHOOK_URL,
+            data=json.dumps(payload),
+            headers=headers,
+            timeout=12,
+            allow_redirects=True
+        )
+        if res.status_code in [200, 302]:
+            return True, "구글 스프레드시트 기록 성공"
         else:
-            return False, f"구글 오류: {res.status_code}"
+            return False, f"구글 서버 거부 (HTTP {res.status_code})"
     except Exception as e:
-        return False, f"구글 통신 지연: {str(e)[:15]}"
+        return False, f"네트워크 지연 ({str(e)[:20]})"
 
 def get_step_logs(batch_id):
     conn = sqlite3.connect(DB_FILE)
@@ -217,7 +221,21 @@ def get_step_logs(batch_id):
     conn.close()
     return df
 
-# 4. 기장군 외기온도 수집
+def get_all_completed_batches():
+    conn = sqlite3.connect(DB_FILE)
+    query = '''
+        SELECT b.batch_id, b.product_name, b.worker_name, b.start_time_korean,
+               q.completed_at, q.actual_duration, q.final_acidity, q.final_ph,
+               q.viscosity_cp, q.syneresis_rate, q.taste_score, q.mqi_total_score, q.worker_memo
+        FROM batch_master b
+        JOIN batch_mqi_final q ON b.batch_id = q.batch_id
+        ORDER BY q.completed_at DESC
+    '''
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+# 기상청 날씨 연동
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_gijang_weather():
     url = (
@@ -227,9 +245,8 @@ def fetch_gijang_weather():
         "daily=temperature_2m_max,temperature_2m_min&"
         "timezone=Asia%2FSeoul"
     )
-    headers = {"Accept": "application/json"}
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
         if res.status_code == 200:
             data = res.json()
             curr_t = float(data["current"]["temperature_2m"])
@@ -241,32 +258,26 @@ def fetch_gijang_weather():
     except Exception:
         return 24.5, 20.0, 29.0, "네트워크 지연 모드"
 
-# 5. 4D 최적화 연산 엔진
 def calculate_optimal_temperatures(start_h, indoor_t, out_t, min_t, max_t):
     time_steps = np.linspace(start_h, start_h + 6.3, 25)
     dt = time_steps - start_h
-
     t_mean = (max_t + min_t) / 2.0
     t_swing = (max_t - min_t) / 2.0
     t_out_traj = t_mean + t_swing * np.sin(2 * np.pi * (time_steps - 10.0) / 24.0)
     t_in_traj = indoor_t + 0.622 * (t_out_traj - out_t) * (1.0 - np.exp(-dt / 2.5))
-
     early_mask = dt <= 1.5
     late_mask = dt > 1.5
     t_eff_early = np.mean(0.70 * t_in_traj[early_mask] + 0.30 * t_out_traj[early_mask])
     t_eff_late = np.mean(0.60 * t_in_traj[late_mask] + 0.40 * t_out_traj[late_mask])
-
     delta_t_pipe = round((1.85 * 8.35 * max(0.0, 38.4 - indoor_t)) / (2.083 * 3930), 2)
     rec_cooling = min(39.3, round(38.4 + max(0.0, (32.0 - t_eff_early) * 0.050) + delta_t_pipe, 1))
     rec_hotwater = min(38.8, round(38.3 + max(0.0, (32.0 - t_eff_late) * 0.040), 1))
     rec_tank_tt = min(39.2, round(38.5 + max(0.0, (32.0 - t_eff_late) * 0.035), 1))
-
     return {
         "rec_cooling": rec_cooling, "rec_hotwater": rec_hotwater,
         "rec_tank_tt": rec_tank_tt, "delta_t_pipe": delta_t_pipe
     }
 
-# 세션 상태 초기화
 if "process_step" not in st.session_state: st.session_state.process_step = 0
 if "batch_id" not in st.session_state: st.session_state.batch_id = ""
 if "batch_start_dt" not in st.session_state: st.session_state.batch_start_dt = None
@@ -294,19 +305,17 @@ step_defs = [
     (6, "A600", "급속 칠링", "PHE301"),
     (7, "A700", "MQI 충전", "서지/충전")
 ]
-
 cur_step = st.session_state.process_step
 
-# 단계 전환 모달
 if hasattr(st, "dialog"):
     @st.dialog("공정 단계별 실내온도 재설정", dismissible=False)
     def step_indoor_temp_modal(s_code, s_name):
         st.markdown(f"#### [{s_code} {s_name}] 단계 진입")
-        st.markdown("현재 작업장 실내온도를 확인하여 입력바람. 확정 즉시 AI 추천온도가 재계산됨.")
+        st.markdown("현재 작업장 실내온도를 입력바람. 확정 즉시 AI 추천온도가 재계산됨.")
         pop_in_val = st.number_input(
             "현재 실내온도 (℃)", 10.0, 40.0, float(st.session_state.indoor_t), 0.1, format="%.1f", key=f"modal_in_t_{cur_step}"
         )
-        if st.button("온도 확정 및 이번 공정 제어 시작", type="primary", use_container_width=True):
+        if st.button("온도 확정 및 공정 시작", type="primary", use_container_width=True):
             st.session_state.indoor_t = pop_in_val
             st.session_state.temp_locked = True
             st.session_state.show_temp_popup = False
@@ -318,16 +327,14 @@ if st.session_state.show_temp_popup and (1 <= cur_step <= 7):
     if hasattr(st, "dialog"):
         step_indoor_temp_modal(step_defs[cur_step - 1][1], step_defs[cur_step - 1][2])
 
-# -------------------------------------------------------------
-# 상단 헤더 3대 카드
-# -------------------------------------------------------------
+# 상단 헤더
 col_weather, col_indoor, col_clock = st.columns([1.0, 1.1, 1.2])
 
 with col_weather:
     st.markdown(
         f"""
         <div style="text-align: center; padding: 10px; background: #0f172a; border-radius: 12px; border: 1.5px solid #38bdf8; margin-bottom: 8px;">
-            <div style="font-size: 11px; color: #94a3b8; font-weight: bold;">부산 기장군 외기 ({weather_status})</div>
+            <div style="font-size: 11px; color: #94a3b8; font-weight: bold;">기장군 외기 ({weather_status})</div>
             <div style="font-size: 26px; font-weight: 900; color: #f43f5e; font-family: monospace; line-height: 1.2; margin: 2px 0;">{curr_t} ℃</div>
             <div style="font-size: 11px; color: #38bdf8; font-weight: 700;">최저 {min_t}℃ ~ 최고 {max_t}℃</div>
         </div>
@@ -431,16 +438,13 @@ with col_clock:
 
 st.markdown("<div style='margin-top: 6px;'></div>", unsafe_allow_html=True)
 
-# -------------------------------------------------------------
-# 상단 7단계 가로형 터치 스와이프 공정 바
-# -------------------------------------------------------------
+# 가로 스와이프 공정 바
 steps_data = []
 for s_idx, s_code, s_label, s_tag in step_defs:
     s_state = "waiting" if cur_step == 0 or cur_step < s_idx else ("completed" if cur_step > s_idx else "active")
     s_dur = "대기" if cur_step == 0 or cur_step < s_idx else (st.session_state.step_durations.get(f"Step_{s_idx}", "완료") if cur_step > s_idx else "진행")
     steps_data.append({"index": s_idx, "code": s_code, "label": s_label, "state": s_state, "duration": s_dur})
 
-steps_json_str = json.dumps(steps_data, ensure_ascii=False)
 stage_bar_html = f"""
 <!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
@@ -456,7 +460,7 @@ stage_bar_html = f"""
 </style></head><body>
 <div class="swipe-container" id="stage-swipe"></div>
 <script>
-    const steps = {steps_json_str};
+    const steps = {json.dumps(steps_data, ensure_ascii=False)};
     const container = document.getElementById('stage-swipe');
     steps.forEach(s => {{
         const card = document.createElement('div');
@@ -482,10 +486,38 @@ components.html(stage_bar_html, height=80)
 st.divider()
 
 # =============================================================
-# 공정 단계별 UI 제어
+# STEP 0: 배치 착수 등록 및 구글 시트 즉시 테스트
 # =============================================================
 if st.session_state.process_step == 0:
     st.subheader("[Step 0] 생산 배치 착수 등록")
+    
+    # 구글 시트 1초 즉각 테스트 인터페이스
+    with st.expander("구글 스프레드시트 연동 상태 실시간 검증 (클릭하여 테스트)", expanded=False):
+        st.caption(f"연동된 웹 앱: `{GSHEET_WEBHOOK_URL[:55]}...`")
+        if st.button("지금 구글 시트로 1줄 테스트 전송하기", use_container_width=True):
+            test_payload = {
+                "batch_id": f"TEST_{get_kst_now().strftime('%H%M%S')}",
+                "product_name": "연동테스트",
+                "worker_name": "관리자",
+                "start_time": format_korean_ampm(get_kst_now()),
+                "cooling_temp": 39.0,
+                "hotwater_temp": 38.5,
+                "phe_temp": 7.3,
+                "duration": 360,
+                "acidity": 0.965,
+                "ph": 4.70,
+                "viscosity": 3200,
+                "syneresis": 1.1,
+                "taste": 5.0,
+                "mqi_score": 100.0,
+                "memo": "SCADA 통신 정상 확인 완료"
+            }
+            ok, msg = send_to_google_sheet(test_payload)
+            if ok:
+                st.success(f"{msg}! 지금 구글 스프레드시트를 열어보면 새 행이 추가되어 있음.")
+            else:
+                st.error(f"전송 실패: {msg}")
+
     product_name_input = st.text_input("생산 품목명", value="런 발효유")
     worker_name = st.text_input("작업자 성명", value="공장장")
     clean_pname = "".join(filter(str.isalnum, product_name_input))
@@ -606,6 +638,9 @@ elif st.session_state.process_step == 6:
         st.session_state.show_temp_popup = True
         st.rerun()
 
+# =============================================================
+# STEP 7: MQI 품질 판정 및 이중 분산 자동 기록
+# =============================================================
 elif st.session_state.process_step == 7:
     st.subheader(f"[Step 7: A700] {st.session_state.product_name} MQI 품질 검증 및 최종 자동 저장")
     f_acid = st.number_input("최종 산도 [골든: 0.965]", 0.800, 1.200, 0.965, 0.001, format="%.3f")
@@ -626,7 +661,6 @@ elif st.session_state.process_step == 7:
         
         save_final_mqi(st.session_state.batch_id, f_total_dur, f_acid, f_ph, f_visc, f_syn, f_taste, mqi_total, f_memo)
         
-        # 저장용 통합 데이터 사전
         final_record = {
             "배치ID": st.session_state.batch_id,
             "품목명": st.session_state.product_name,
@@ -646,11 +680,11 @@ elif st.session_state.process_step == 7:
             "기록일시": get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        # 1. 로컬 PC에 엑셀 파일(.xlsx) 자동 누적 저장
+        # 1. 서버 내부 엑셀 누적
         excel_ok, excel_msg = append_to_local_excel(final_record)
         st.session_state.excel_status = excel_msg
         
-        # 2. 구글 스프레드시트 클라우드 웹훅 전송
+        # 2. 구글 스프레드시트 클라우드 웹훅 실시간 전송
         gsheet_payload = {
             "batch_id": final_record["배치ID"], "product_name": final_record["품목명"],
             "worker_name": final_record["작업자"], "start_time": final_record["착수시각"],
@@ -662,23 +696,50 @@ elif st.session_state.process_step == 7:
         }
         g_ok, g_msg = send_to_google_sheet(gsheet_payload)
         st.session_state.gsheet_status = g_msg
+        st.session_state.gsheet_ok = g_ok
         
         st.session_state.process_step = 8
         st.rerun()
 
+# =============================================================
+# STEP 8: 완료 보고 및 즉시 엑셀 다운로드
+# =============================================================
 elif st.session_state.process_step == 8:
-    st.success(f"[{st.session_state.product_name}] 배치 [{st.session_state.batch_id}] 공정 종결 및 저장 완료")
+    st.success(f"[{st.session_state.product_name}] 배치 [{st.session_state.batch_id}] 공정 종결 완료")
     
     col_s1, col_s2 = st.columns(2)
     with col_s1:
-        st.info(f"**로컬 엑셀:** {getattr(st.session_state, 'excel_status', '저장 완료')}")
+        st.info(f"**서버 엑셀 상태:** {getattr(st.session_state, 'excel_status', '저장 완료')}")
     with col_s2:
-        st.info(f"**구글 시트:** {getattr(st.session_state, 'gsheet_status', '대기 중')}")
+        g_msg = getattr(st.session_state, 'gsheet_status', '미설정')
+        if getattr(st.session_state, 'gsheet_ok', False):
+            st.success(f"**구글 시트:** {g_msg}")
+        else:
+            st.error(f"**구글 시트:** {g_msg}")
 
+    # 스마트폰/PC 기기로 엑셀 파일 즉시 내려받기 버튼
+    all_df = get_all_completed_batches()
+    if not all_df.empty:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            all_df.to_excel(writer, index=False, sheet_name='누적공정이력')
+        excel_data = buffer.getvalue()
+        
+        st.download_button(
+            label="누적 공정기록 엑셀(.xlsx) 내 기기로 다운로드",
+            data=excel_data,
+            file_name=f"FermaAX_History_{date.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True
+        )
+
+    st.markdown("---")
+    st.markdown("#### 이번 배치 단계별 온도/시간 이력")
     cur_logs = get_step_logs(st.session_state.batch_id)
     st.dataframe(cur_logs, use_container_width=True)
 
-    if st.button("새로운 배치 작업 시작하기", type="primary", use_container_width=True):
+    if st.button("새로운 배치 작업 시작하기", use_container_width=True):
         st.session_state.process_step = 0
         st.session_state.batch_id = ""
         st.session_state.batch_start_dt = None
