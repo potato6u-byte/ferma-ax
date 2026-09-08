@@ -25,7 +25,9 @@ GSHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzMcyBZL5mhYVfP5Sh
 
 # 대한민국 표준시(KST) 타임존 설정
 try:
-from zoneinfo import ZoneInfo
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 KST = ZoneInfo("Asia/Seoul")
 @@ -52,11 +49,7 @@ def format_time_delta(seconds_total):
 else:
