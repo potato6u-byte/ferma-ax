@@ -6,6 +6,7 @@ FermaAX™ Mobile-Optimized SCADA SOP & AI Temperature Controller v7.6
 • Step 2: 투입 탱크 중 최대 열손실 탱크 기준 살균냉각 안전온도 연산
 • Step 3 (핵심): 선택된 탱크별 개별 단열계수(kappa) 기반 동적 핫워터 AI 추천 및 실측 개별 제어판 제공
 • 구글 스프레드시트 웹훅 및 로컬 엑셀(.xlsx) 통합 분산 로깅 완비
+• [UI v7.6-P] 퍼플 테마 + 상단 고정(Sticky) 공정 흐름바 적용
 """
 import os
 import io
@@ -48,13 +49,150 @@ def format_time_delta(seconds_total):
 
 st.set_page_config(page_title="런 발효유 SCADA", layout="wide", initial_sidebar_state="collapsed")
 
+# =============================================================
+# 1-1. 퍼플 테마 글로벌 CSS
+# =============================================================
 st.markdown("""
 <style>
-    .stTextInput label, .stNumberInput label, .stSelectbox label, .stMultiSelect label {
-        font-size: 1.1rem !important; font-weight: 700 !important; color: #0f172a !important;
+    /* ---------- 퍼플 팔레트 변수 ---------- */
+    :root {
+        --fp-900: #4c1d95;
+        --fp-700: #6d28d9;
+        --fp-600: #7c3aed;
+        --fp-500: #8b5cf6;
+        --fp-300: #c4b5fd;
+        --fp-200: #ddd6fe;
+        --fp-100: #ede9fe;
+        --fp-50:  #f5f3ff;
     }
+
+    /* ---------- 전체 배경 & 타이포 ---------- */
+    .stApp { background: #fbfaff; }
+    h1, h2, h3 { color: var(--fp-900) !important; }
+
+    .stTextInput label, .stNumberInput label, .stSelectbox label, .stMultiSelect label {
+        font-size: 1.1rem !important; font-weight: 700 !important; color: var(--fp-900) !important;
+    }
+
+    /* ---------- 버튼 (기본/프라이머리) ---------- */
     .stButton button {
         font-size: 1.1rem !important; font-weight: 700 !important;
+        border-radius: 10px !important;
+    }
+    .stButton button[kind="primary"] {
+        background: linear-gradient(90deg, var(--fp-700), var(--fp-500)) !important;
+        border: none !important; color: #ffffff !important;
+        box-shadow: 0 3px 10px rgba(124, 58, 237, 0.35) !important;
+    }
+    .stButton button[kind="primary"]:hover {
+        background: linear-gradient(90deg, var(--fp-900), var(--fp-600)) !important;
+    }
+    .stDownloadButton button {
+        background: var(--fp-100) !important; color: var(--fp-900) !important;
+        border: 1.5px solid var(--fp-500) !important; border-radius: 10px !important;
+        font-weight: 700 !important;
+    }
+
+    /* ---------- 입력 위젯 포커스 컬러 ---------- */
+    .stNumberInput input:focus, .stTextInput input:focus {
+        border-color: var(--fp-600) !important;
+        box-shadow: 0 0 0 2px var(--fp-200) !important;
+    }
+    span[data-baseweb="tag"] { background-color: var(--fp-100) !important; }
+    span[data-baseweb="tag"] span { color: var(--fp-900) !important; }
+
+    /* ---------- 정보/성공/경고 박스 퍼플 톤 ---------- */
+    div[data-testid="stInfo"] {
+        background-color: var(--fp-100) !important;
+        border-left: 5px solid var(--fp-600) !important;
+        border-radius: 10px !important;
+    }
+    div[data-testid="stSuccess"] {
+        background-color: #f0fdf4 !important;
+        border-left: 5px solid #22c55e !important;
+        border-radius: 10px !important;
+    }
+
+    /* ---------- 구분선 ---------- */
+    hr { border-color: var(--fp-200) !important; }
+
+    /* =========================================================
+       상단 고정(Sticky) 공정 흐름바
+       ========================================================= */
+    .fs-sticky {
+        position: sticky;
+        top: 2.875rem;              /* Streamlit 헤더 바로 아래 고정 */
+        z-index: 999;
+        background: linear-gradient(135deg, var(--fp-100), #ffffff 70%);
+        border: 1px solid var(--fp-200);
+        border-radius: 14px;
+        padding: 10px 14px 12px 14px;
+        box-shadow: 0 4px 16px rgba(109, 40, 217, 0.18);
+        margin-bottom: 14px;
+    }
+    .fs-head {
+        display: flex; flex-wrap: wrap; align-items: baseline;
+        justify-content: space-between; gap: 4px 14px;
+        margin-bottom: 8px;
+    }
+    .fs-title {
+        font-size: 1.25rem; font-weight: 800; color: var(--fp-900);
+        letter-spacing: -0.3px;
+    }
+    .fs-title small { font-size: 0.8rem; font-weight: 600; color: var(--fp-600); }
+    .fs-weather { font-size: 0.85rem; font-weight: 600; color: var(--fp-700); }
+    .fs-now {
+        font-size: 0.85rem; font-weight: 800; color: #ffffff;
+        background: var(--fp-600); border-radius: 999px; padding: 3px 12px;
+    }
+
+    /* 공정 칩 (가로 스크롤 - 모바일에서 세로로 밀리지 않음) */
+    .fs-bar {
+        display: flex; flex-wrap: nowrap; align-items: stretch;
+        gap: 6px; overflow-x: auto; padding-bottom: 2px;
+        -webkit-overflow-scrolling: touch;
+    }
+    .fs-bar::-webkit-scrollbar { height: 4px; }
+    .fs-bar::-webkit-scrollbar-thumb { background: var(--fp-300); border-radius: 4px; }
+
+    .fs-chip {
+        flex: 0 0 auto;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        min-width: 82px; padding: 6px 10px; border-radius: 11px;
+        line-height: 1.25;
+    }
+    .fs-icon { font-size: 0.95rem; }
+    .fs-code { font-size: 0.95rem; font-weight: 800; }
+    .fs-label { font-size: 0.72rem; font-weight: 600; opacity: 0.9; }
+
+    .fs-active {
+        background: linear-gradient(135deg, var(--fp-700), var(--fp-500));
+        color: #ffffff;
+        box-shadow: 0 3px 10px rgba(124, 58, 237, 0.45);
+        animation: fsPulse 1.6s ease-in-out infinite;
+    }
+    .fs-done  { background: var(--fp-200); color: var(--fp-900); }
+    .fs-wait  { background: #ffffff; color: #94a3b8; border: 1.5px dashed #cbd5e1; }
+
+    .fs-arrow {
+        flex: 0 0 auto; align-self: center;
+        color: var(--fp-300); font-weight: 800; font-size: 1.05rem;
+    }
+
+    @keyframes fsPulse {
+        0%, 100% { box-shadow: 0 3px 10px rgba(124, 58, 237, 0.45); }
+        50%      { box-shadow: 0 3px 18px rgba(124, 58, 237, 0.75); }
+    }
+
+    /* 진행률 바 */
+    .fs-progress-wrap {
+        height: 6px; background: var(--fp-100);
+        border-radius: 999px; margin-top: 8px; overflow: hidden;
+    }
+    .fs-progress {
+        height: 100%;
+        background: linear-gradient(90deg, var(--fp-600), var(--fp-500));
+        border-radius: 999px; transition: width .4s ease;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -323,23 +461,55 @@ if st.session_state.show_temp_popup and cur_step in [2, 3, 6, 7]:
     s_info = step_defs[cur_step - 1]
     step_indoor_temp_modal(s_info[1], s_info[2])
 
-st.title("FermaAX™ SCADA SOP & AI Controller v7.6")
-st.caption(f"기장군 기상: {curr_t}℃ ({min_t}℃~{max_t}℃) | 상태: {weather_status}")
+# =============================================================
+# 3-1. 상단 고정(Sticky) 퍼플 공정 흐름바 렌더링
+#      - 스크롤해도 항상 상단에 고정
+#      - 모바일에서는 가로 스크롤 칩(세로로 길게 밀리지 않음)
+# =============================================================
+def render_sticky_stepper(cur_step, step_defs, curr_t, min_t, max_t, weather_status):
+    # 현재 단계 표시 텍스트
+    if cur_step == 0:
+        now_badge = "STEP 0 · 배치 착수 등록"
+    elif cur_step >= 8:
+        now_badge = "✔ 전 공정 종결"
+    else:
+        _s = step_defs[cur_step - 1]
+        now_badge = f"진행중 · {_s[1]} {_s[2]}"
 
-st.markdown("<div style='margin-top: 6px;'></div>", unsafe_allow_html=True)
-
-cols = st.columns(len(step_defs))
-for idx, (s_idx, s_code, s_label, s_tag) in enumerate(step_defs):
-    s_state = "waiting" if cur_step == 0 or cur_step < s_idx else ("completed" if cur_step > s_idx else "active")
-    with cols[idx]:
-        if s_state == "active":
-            st.button(f"▶ {s_code}", key=f"bar_{s_idx}", type="primary", use_container_width=True)
-        elif s_state == "completed":
-            st.button(f"✔ {s_code}", key=f"bar_{s_idx}", disabled=True, use_container_width=True)
+    chips_html = ""
+    for (s_idx, s_code, s_label, s_tag) in step_defs:
+        if cur_step == 0 or cur_step < s_idx:
+            state, icon = "wait", "⏱"
+        elif cur_step > s_idx:
+            state, icon = "done", "✔"
         else:
-            st.button(f"⏱ {s_code}", key=f"bar_{s_idx}", disabled=True, use_container_width=True)
+            state, icon = "active", "▶"
+        chips_html += (
+            f'<div class="fs-chip fs-{state}">'
+            f'<span class="fs-icon">{icon}</span>'
+            f'<span class="fs-code">{s_code}</span>'
+            f'<span class="fs-label">{s_label}</span>'
+            f'</div>'
+        )
+        if s_idx < len(step_defs):
+            chips_html += '<div class="fs-arrow">›</div>'
 
-st.divider()
+    # 진행률 (Step 0=0%, 종결=100%)
+    progress_pct = int(min(max(cur_step, 0), 7) / 7 * 100)
+
+    st.markdown(f"""
+    <div class="fs-sticky">
+        <div class="fs-head">
+            <div class="fs-title">FermaAX™ SCADA <small>v7.6</small></div>
+            <div class="fs-weather">기장군 기상: {curr_t}℃ ({min_t}℃~{max_t}℃) · {weather_status}</div>
+            <div class="fs-now">{now_badge}</div>
+        </div>
+        <div class="fs-bar">{chips_html}</div>
+        <div class="fs-progress-wrap"><div class="fs-progress" style="width:{progress_pct}%"></div></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+render_sticky_stepper(cur_step, step_defs, curr_t, min_t, max_t, weather_status)
 
 # =============================================================
 # STEP 0: 생산 배치 착수 등록 (다중 탱크 선택)
@@ -460,8 +630,8 @@ elif st.session_state.process_step == 3:
 
     for idx, tank_name in enumerate(st.session_state.selected_tanks):
         t_info = c_res["tanks"].get(tank_name, {"rec_hotwater": 38.3, "rec_tank_tt": 38.5, "kappa": 1.00})
-        st.markdown(f"#### 🏷️ **{tank_name}** (단열계수 $\kappa$={t_info['kappa']})")
-        
+        st.markdown(f"#### 🏷️ **{tank_name}** (단열계수 $\\kappa$={t_info['kappa']})")
+
         col_t_rec, col_t_in1, col_t_in2 = st.columns([1.2, 1.0, 1.0])
         with col_t_rec:
             st.info(f"**AI 추천 핫워터:** **`{t_info['rec_hotwater']} ℃`**\n\n**목표 품온:** `{t_info['rec_tank_tt']} ℃`")
