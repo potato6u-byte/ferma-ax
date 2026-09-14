@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-FermaAX™ Mobile-Optimized SCADA SOP & AI Temperature Controller v7.6
+FermaAX™ Mobile-Optimized SCADA SOP & AI Temperature Controller v7.7
 • 단일 공정 다중 탱크(Multi-Tank) 분입 시스템 완벽 지원
-• Step 0: 이번 배치에 투입할 발효탱크 다중 선택 (Multi-Select)
-• Step 2: 투입 탱크 중 최대 열손실 탱크 기준 살균냉각 안전온도 연산
-• Step 3 (핵심): 선택된 탱크별 개별 단열계수(kappa) 기반 동적 핫워터 AI 추천 및 실측 개별 제어판 제공
-• 구글 스프레드시트 웹훅 및 로컬 엑셀(.xlsx) 통합 분산 로깅 완비
-• [UI v7.6-P] 퍼플 테마 + 상단 고정(Sticky) 공정 흐름바 적용
+• Step 0: 이번 배치에 투입할 발효탱크 다중 선택 + 시간대별 보정(Δ℃) 설정 입력
+• Step 2: 투입 탱크 중 최대 열손실 탱크 기준 살균냉각 안전온도 연산 (+시간대 보정 반영)
+• Step 3: 탱크별 개별 단열계수(kappa) 기반 동적 핫워터 AI 추천 및 실측 개별 제어판
+• 겨울철 과발효 방지: 착수 시간대(Time-Band)별 AI 추천온도 자동 보정
+• 구글 스프레드시트 웹훅 및 로컬 엑셀(.xlsx) 통합 분산 로깅 (xlsxwriter 미설치 시 openpyxl 자동 전환)
+• [UI] 퍼플 테마 + 상단 고정(Sticky) 공정 흐름바
 """
 import os
 import io
@@ -54,7 +55,6 @@ st.set_page_config(page_title="런 발효유 SCADA", layout="wide", initial_side
 # =============================================================
 st.markdown("""
 <style>
-    /* ---------- 퍼플 팔레트 변수 ---------- */
     :root {
         --fp-900: #4c1d95;
         --fp-700: #6d28d9;
@@ -65,8 +65,6 @@ st.markdown("""
         --fp-100: #ede9fe;
         --fp-50:  #f5f3ff;
     }
-
-    /* ---------- 전체 배경 & 타이포 ---------- */
     .stApp { background: #fbfaff; }
     h1, h2, h3 { color: var(--fp-900) !important; }
 
@@ -74,7 +72,6 @@ st.markdown("""
         font-size: 1.1rem !important; font-weight: 700 !important; color: var(--fp-900) !important;
     }
 
-    /* ---------- 버튼 (기본/프라이머리) ---------- */
     .stButton button {
         font-size: 1.1rem !important; font-weight: 700 !important;
         border-radius: 10px !important;
@@ -93,7 +90,6 @@ st.markdown("""
         font-weight: 700 !important;
     }
 
-    /* ---------- 입력 위젯 포커스 컬러 ---------- */
     .stNumberInput input:focus, .stTextInput input:focus {
         border-color: var(--fp-600) !important;
         box-shadow: 0 0 0 2px var(--fp-200) !important;
@@ -101,7 +97,6 @@ st.markdown("""
     span[data-baseweb="tag"] { background-color: var(--fp-100) !important; }
     span[data-baseweb="tag"] span { color: var(--fp-900) !important; }
 
-    /* ---------- 정보/성공/경고 박스 퍼플 톤 ---------- */
     div[data-testid="stInfo"] {
         background-color: var(--fp-100) !important;
         border-left: 5px solid var(--fp-600) !important;
@@ -112,16 +107,12 @@ st.markdown("""
         border-left: 5px solid #22c55e !important;
         border-radius: 10px !important;
     }
-
-    /* ---------- 구분선 ---------- */
     hr { border-color: var(--fp-200) !important; }
 
-    /* =========================================================
-       상단 고정(Sticky) 공정 흐름바
-       ========================================================= */
+    /* ===== 상단 고정(Sticky) 공정 흐름바 ===== */
     .fs-sticky {
         position: sticky;
-        top: 2.875rem;              /* Streamlit 헤더 바로 아래 고정 */
+        top: 2.875rem;
         z-index: 999;
         background: linear-gradient(135deg, var(--fp-100), #ffffff 70%);
         border: 1px solid var(--fp-200);
@@ -135,18 +126,13 @@ st.markdown("""
         justify-content: space-between; gap: 4px 14px;
         margin-bottom: 8px;
     }
-    .fs-title {
-        font-size: 1.25rem; font-weight: 800; color: var(--fp-900);
-        letter-spacing: -0.3px;
-    }
+    .fs-title { font-size: 1.25rem; font-weight: 800; color: var(--fp-900); letter-spacing: -0.3px; }
     .fs-title small { font-size: 0.8rem; font-weight: 600; color: var(--fp-600); }
     .fs-weather { font-size: 0.85rem; font-weight: 600; color: var(--fp-700); }
     .fs-now {
         font-size: 0.85rem; font-weight: 800; color: #ffffff;
         background: var(--fp-600); border-radius: 999px; padding: 3px 12px;
     }
-
-    /* 공정 칩 (가로 스크롤 - 모바일에서 세로로 밀리지 않음) */
     .fs-bar {
         display: flex; flex-wrap: nowrap; align-items: stretch;
         gap: 6px; overflow-x: auto; padding-bottom: 2px;
@@ -154,7 +140,6 @@ st.markdown("""
     }
     .fs-bar::-webkit-scrollbar { height: 4px; }
     .fs-bar::-webkit-scrollbar-thumb { background: var(--fp-300); border-radius: 4px; }
-
     .fs-chip {
         flex: 0 0 auto;
         display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -164,7 +149,6 @@ st.markdown("""
     .fs-icon { font-size: 0.95rem; }
     .fs-code { font-size: 0.95rem; font-weight: 800; }
     .fs-label { font-size: 0.72rem; font-weight: 600; opacity: 0.9; }
-
     .fs-active {
         background: linear-gradient(135deg, var(--fp-700), var(--fp-500));
         color: #ffffff;
@@ -173,18 +157,11 @@ st.markdown("""
     }
     .fs-done  { background: var(--fp-200); color: var(--fp-900); }
     .fs-wait  { background: #ffffff; color: #94a3b8; border: 1.5px dashed #cbd5e1; }
-
-    .fs-arrow {
-        flex: 0 0 auto; align-self: center;
-        color: var(--fp-300); font-weight: 800; font-size: 1.05rem;
-    }
-
+    .fs-arrow { flex: 0 0 auto; align-self: center; color: var(--fp-300); font-weight: 800; font-size: 1.05rem; }
     @keyframes fsPulse {
         0%, 100% { box-shadow: 0 3px 10px rgba(124, 58, 237, 0.45); }
         50%      { box-shadow: 0 3px 18px rgba(124, 58, 237, 0.75); }
     }
-
-    /* 진행률 바 */
     .fs-progress-wrap {
         height: 6px; background: var(--fp-100);
         border-radius: 999px; margin-top: 8px; overflow: hidden;
@@ -198,7 +175,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =============================================================
-# 2. SQLite 데이터베이스 초기화 (다중 탱크 v7.6)
+# 2. SQLite 데이터베이스 초기화 (다중 탱크 v7.7)
 # =============================================================
 DB_FILE = "ferma_master_history.db"
 
@@ -316,8 +293,14 @@ def get_all_completed_batches_multi():
     return df
 
 def create_excel_download(df_master, df_logs):
+    """xlsxwriter 미설치 환경(Streamlit Cloud 등)에서는 openpyxl로 자동 전환"""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    try:
+        import xlsxwriter  # noqa: F401
+        engine = "xlsxwriter"
+    except ImportError:
+        engine = "openpyxl"
+    with pd.ExcelWriter(output, engine=engine) as writer:
         df_master.to_excel(writer, sheet_name='배치종합역사', index=False)
         df_logs.to_excel(writer, sheet_name='단계별세부로그', index=False)
     return output.getvalue()
@@ -357,7 +340,39 @@ RAW_SPECS = {
     "고형분 농축/환원 배합유": {"cp": 3820.0, "offset": +0.1, "cooling_target": 7.3}
 }
 
-def calculate_multi_tank_temperatures(start_h, indoor_t, out_t, min_t, max_t, tank_list, raw_mat):
+# =============================================================
+# 3-0. 겨울철 과발효 방지용 시간대별 설정 보정 (Time-Band Offset)
+# =============================================================
+DEFAULT_TIME_BANDS = [
+    {"시작": "22:00", "종료": "06:00", "보정Δ℃": 0.3, "메모": "심야/새벽 착수 - 초기온도 확보"},
+    {"시작": "06:00", "종료": "10:00", "보정Δ℃": 0.1, "메모": "아침 착수 - 완만한 발효 유도"},
+    {"시작": "10:00", "종료": "16:00", "보정Δ℃": 0.0, "메모": "주간 착수 - 기준"},
+    {"시작": "16:00", "종료": "22:00", "보정Δ℃": 0.2, "메모": "저녁 착수 - 야간 방열 대비"},
+]
+
+def _hhmm_to_float(s):
+    """'22:30' -> 22.5"""
+    h, m = str(s).split(":")
+    return int(h) + int(m) / 60.0
+
+def get_active_band(hour_float, bands):
+    """현재 시각(hour_float, 0~24)이 속한 밴드를 반환. 자정 교차 밴드 지원."""
+    for b in bands:
+        try:
+            s = _hhmm_to_float(b["시작"])
+            e = _hhmm_to_float(b["종료"])
+        except Exception:
+            continue
+        if s <= e:
+            inside = (s <= hour_float < e)
+        else:  # 예: 22:00~06:00 처럼 자정을 넘는 밴드
+            inside = (hour_float >= s) or (hour_float < e)
+        if inside:
+            return b
+    return None
+
+def calculate_multi_tank_temperatures(start_h, indoor_t, out_t, min_t, max_t, tank_list, raw_mat,
+                                      time_offset=0.0):
     time_steps = np.linspace(start_h, start_h + 6.3, 25)
     dt = time_steps - start_h
     t_mean = (max_t + min_t) / 2.0
@@ -379,15 +394,17 @@ def calculate_multi_tank_temperatures(start_h, indoor_t, out_t, min_t, max_t, ta
     kappas = [TANK_SPECS[t]["kappa"] for t in tank_list if t in TANK_SPECS]
     max_kappa = max(kappas) if kappas else 1.00
     base_cool = 38.4 + max(0.0, (32.0 - t_eff_early) * 0.050 * max_kappa) + delta_t_pipe + mat_offset
-    rec_cooling = min(39.3, round(base_cool, 1))
+    # ★ 시간대 보정 가산 + 안전 클램프(37.5~39.3)
+    rec_cooling = min(39.3, max(37.5, round(base_cool + time_offset, 1)))
 
     tank_recommendations = {}
     for t in tank_list:
         k_val = TANK_SPECS.get(t, {}).get("kappa", 1.00)
         base_hw = 38.3 + max(0.0, (32.0 - t_eff_late) * 0.040 * k_val) + (mat_offset * 0.5)
-        rec_hw = min(38.8, round(base_hw, 1))
+        # ★ 핫워터는 보정의 70%만 반영 (과보온 방지) + 안전 클램프
+        rec_hw = min(38.8, max(37.5, round(base_hw + time_offset * 0.7, 1)))
         base_tt = 38.5 + max(0.0, (32.0 - t_eff_late) * 0.035 * k_val)
-        rec_tt = min(39.2, round(base_tt, 1))
+        rec_tt = min(39.2, max(37.8, round(base_tt + time_offset * 0.5, 1)))
         tank_recommendations[t] = {
             "kappa": k_val,
             "rec_hotwater": rec_hw,
@@ -398,6 +415,7 @@ def calculate_multi_tank_temperatures(start_h, indoor_t, out_t, min_t, max_t, ta
         "rec_cooling": rec_cooling,
         "delta_t_pipe": delta_t_pipe,
         "target_chilling": m_prof["cooling_target"],
+        "time_offset": time_offset,
         "tanks": tank_recommendations
     }
 
@@ -416,15 +434,26 @@ if "indoor_t" not in st.session_state: st.session_state.indoor_t = 24.5
 if "temp_locked" not in st.session_state: st.session_state.temp_locked = False
 if "show_temp_popup" not in st.session_state: st.session_state.show_temp_popup = False
 if "tank_measurements" not in st.session_state: st.session_state.tank_measurements = {}
+if "time_bands" not in st.session_state: st.session_state.time_bands = [dict(b) for b in DEFAULT_TIME_BANDS]
 
 curr_t, min_t, max_t, weather_status = fetch_gijang_weather()
 kst_now = get_kst_now()
+
+# ★ 현재 시각 기준 활성 시간밴드 & 보정값
+_now_h = round(float(kst_now.hour + kst_now.minute / 60.0), 1)
+_active_band = get_active_band(_now_h, st.session_state.time_bands)
+st.session_state.time_offset_now = float(_active_band["보정Δ℃"]) if _active_band else 0.0
+st.session_state.active_band_label = (
+    f"{_active_band['시작']}~{_active_band['종료']} (Δ{_active_band['보정Δ℃']:+.1f}℃)"
+    if _active_band else "보정 없음"
+)
 
 if "calc_res" not in st.session_state:
     st.session_state.calc_res = calculate_multi_tank_temperatures(
         round(float(kst_now.hour + kst_now.minute / 60.0), 1),
         st.session_state.indoor_t, curr_t, min_t, max_t,
-        st.session_state.selected_tanks, st.session_state.raw_material
+        st.session_state.selected_tanks, st.session_state.raw_material,
+        time_offset=st.session_state.time_offset_now
     )
 
 step_defs = [
@@ -453,7 +482,8 @@ def step_indoor_temp_modal(s_code, s_name):
         calc_h = st.session_state.get("start_hour", round(float(kst_now.hour + kst_now.minute / 60.0), 1))
         st.session_state.calc_res = calculate_multi_tank_temperatures(
             calc_h, pop_in_val, curr_t, min_t, max_t,
-            st.session_state.selected_tanks, st.session_state.raw_material
+            st.session_state.selected_tanks, st.session_state.raw_material,
+            time_offset=st.session_state.time_offset_now
         )
         st.rerun()
 
@@ -463,11 +493,8 @@ if st.session_state.show_temp_popup and cur_step in [2, 3, 6, 7]:
 
 # =============================================================
 # 3-1. 상단 고정(Sticky) 퍼플 공정 흐름바 렌더링
-#      - 스크롤해도 항상 상단에 고정
-#      - 모바일에서는 가로 스크롤 칩(세로로 길게 밀리지 않음)
 # =============================================================
 def render_sticky_stepper(cur_step, step_defs, curr_t, min_t, max_t, weather_status):
-    # 현재 단계 표시 텍스트
     if cur_step == 0:
         now_badge = "STEP 0 · 배치 착수 등록"
     elif cur_step >= 8:
@@ -494,13 +521,12 @@ def render_sticky_stepper(cur_step, step_defs, curr_t, min_t, max_t, weather_sta
         if s_idx < len(step_defs):
             chips_html += '<div class="fs-arrow">›</div>'
 
-    # 진행률 (Step 0=0%, 종결=100%)
     progress_pct = int(min(max(cur_step, 0), 7) / 7 * 100)
 
     st.markdown(f"""
     <div class="fs-sticky">
         <div class="fs-head">
-            <div class="fs-title">FermaAX™ SCADA <small>v7.6</small></div>
+            <div class="fs-title">FermaAX™ SCADA <small>v7.7</small></div>
             <div class="fs-weather">기장군 기상: {curr_t}℃ ({min_t}℃~{max_t}℃) · {weather_status}</div>
             <div class="fs-now">{now_badge}</div>
         </div>
@@ -512,7 +538,7 @@ def render_sticky_stepper(cur_step, step_defs, curr_t, min_t, max_t, weather_sta
 render_sticky_stepper(cur_step, step_defs, curr_t, min_t, max_t, weather_status)
 
 # =============================================================
-# STEP 0: 생산 배치 착수 등록 (다중 탱크 선택)
+# STEP 0: 생산 배치 착수 등록 (다중 탱크 선택 + 시간대 보정 설정)
 # =============================================================
 if st.session_state.process_step == 0:
     st.subheader("[Step 0] 생산 배치 착수 등록 (다중 탱크 분입)")
@@ -529,6 +555,43 @@ if st.session_state.process_step == 0:
             ok, msg = send_to_google_sheet(test_payload)
             if ok: st.success("구글 시트 기록 성공!")
             else: st.error(f"전송 실패: {msg}")
+
+    with st.expander("⏰ 시간대별 설정 보정 (겨울철 과발효 방지)", expanded=False):
+        st.caption(
+            "착수 시간대에 따라 AI 추천온도에 가산할 보정값(Δ℃)을 입력합니다. "
+            "음수(-) 입력 시 해당 시간대는 온도를 낮춥니다. 자정을 넘는 구간(예: 22:00~06:00)도 지원합니다."
+        )
+        edited = st.data_editor(
+            pd.DataFrame(st.session_state.time_bands),
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "시작": st.column_config.TextColumn("시작 (HH:MM)", required=True),
+                "종료": st.column_config.TextColumn("종료 (HH:MM)", required=True),
+                "보정Δ℃": st.column_config.NumberColumn("보정 Δ℃", min_value=-1.0, max_value=1.0, step=0.1, format="%.1f"),
+                "메모": st.column_config.TextColumn("메모"),
+            },
+            key="time_band_editor"
+        )
+        c_tb1, c_tb2 = st.columns(2)
+        with c_tb1:
+            if st.button("시간대 보정 저장 및 재계산", use_container_width=True):
+                st.session_state.time_bands = edited.to_dict("records")
+                st.session_state.calc_res = calculate_multi_tank_temperatures(
+                    _now_h, st.session_state.indoor_t, curr_t, min_t, max_t,
+                    st.session_state.selected_tanks, st.session_state.raw_material,
+                    time_offset=st.session_state.time_offset_now
+                )
+                st.rerun()
+        with c_tb2:
+            if st.button("겨울철 기본값으로 초기화", use_container_width=True):
+                st.session_state.time_bands = [dict(b) for b in DEFAULT_TIME_BANDS]
+                st.rerun()
+
+    # 현재 적용 중인 보정 배지
+    st.info(f"🕒 현재 활성 시간밴드: **{st.session_state.active_band_label}** "
+            f"→ 살균냉각 **{st.session_state.time_offset_now:+.1f}℃**, "
+            f"핫워터 **{st.session_state.time_offset_now * 0.7:+.1f}℃** 자동 반영")
 
     sel_tanks = st.multiselect(
         "이번 배치 투입 발효탱크 (복수 선택 가능)",
@@ -555,6 +618,11 @@ if st.session_state.process_step == 0:
             start_korean_val = format_korean_ampm(exact_kst_dt)
             start_hour_val = round(float(exact_kst_dt.hour + exact_kst_dt.minute / 60.0), 1)
 
+            # 착수 시각 기준 활성 밴드 재확정
+            _sb = get_active_band(start_hour_val, st.session_state.time_bands)
+            _so = float(_sb["보정Δ℃"]) if _sb else 0.0
+            st.session_state.time_offset_now = _so
+
             st.session_state.run_id = auto_run_id
             st.session_state.selected_tanks = sel_tanks
             st.session_state.raw_material = sel_raw
@@ -567,7 +635,8 @@ if st.session_state.process_step == 0:
 
             st.session_state.calc_res = calculate_multi_tank_temperatures(
                 start_hour_val, st.session_state.indoor_t, curr_t, min_t, max_t,
-                sel_tanks, sel_raw
+                sel_tanks, sel_raw,
+                time_offset=_so
             )
 
             tanks_str = ", ".join(sel_tanks)
@@ -603,7 +672,7 @@ elif st.session_state.process_step == 2:
     c_res = st.session_state.calc_res
     st.info(f"""
     * **살균기 공통 토출 최적화 (선택 {len(st.session_state.selected_tanks)}개 탱크 중 최대 방열 단열계수 기준)**
-    * **AI 추천 살균냉각온도:** **{c_res['rec_cooling']} ℃** (배관손실 +{c_res['delta_t_pipe']}℃ 반영)
+    * **AI 추천 살균냉각온도:** **{c_res['rec_cooling']} ℃** (배관손실 +{c_res['delta_t_pipe']}℃, 시간대보정 {c_res.get('time_offset', 0.0):+.1f}℃ 반영)
     * 살균 토출액은 배관을 거쳐 각 발효탱크로 동시 분입됨.
     """)
     op_set_cool = st.number_input("HMI 실제 살균냉각 설정값 (P101TC02.SP, ℃)", 35.0, 42.0, float(c_res['rec_cooling']), 0.1)
